@@ -632,20 +632,17 @@
      and placed to cover the frame on its own. */
   #wipe{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden}
   #wipe i{position:absolute;display:block;background-repeat:no-repeat;background-size:100% 100%}
-  /* AND A BACKING, BECAUSE THE NEAR BAND DOES NOT COVER THE FRAME. The comment above said it
-     did, by construction, and the arithmetic looked right -- three slots at -16, 24 and 60vh
-     with heights 38, 52 and 43. But those are the heights of the ELEMENTS, and the cloud
-     drawn into each one is opaque over maybe half its box: the puffs run along the bottom
-     edge and the top of the image is transparent sky. So the real cover had a seam across it
-     at about a fifth of the way down, which is the band in his screenshot -- and the world
-     behind it is being torn down and rebuilt at exactly that moment, so what shows through is
-     the messiest frame in the whole game.
-     One element, the cloud's own gradient, faded up as the banks close and down as they part.
-     It is white where they are white, so it is invisible except as the thing that is no longer
-     showing the seam. */
-  #wipefill{position:fixed;inset:-2px;z-index:10;pointer-events:none;opacity:0;
-    background:linear-gradient(180deg,#ffffff 0%,#f7fbff 46%,#e3eefa 78%,#cfe0f0 100%);
-    transition:opacity .34s ease}
+  /* A BACKING, BECAUSE THE NEAR BAND DOES NOT COVER THE FRAME. Those slot heights are the
+     heights of the ELEMENTS, and the cloud drawn into each is opaque over about half its box
+     -- the puffs run along the bottom and the top of the image is transparent sky -- so there
+     was a seam a fifth of the way down, over the messiest frame in the game.
+     IT IS A CLASS ON #wipe NOW, NOT A DIV OF ITS OWN. As a separate position:fixed element
+     with an opacity transition it was a whole extra full-screen compositing layer, asked for
+     at the exact instant the WebGL scene is being torn down and rebuilt -- the moment this
+     file already carries a comment about killing Safari for memory. #wipe is a layer that
+     exists anyway, and a flat colour rasterises for free where a gradient does not. */
+  #wipe{transition:background-color .34s ease}
+  #wipe.fill{background-color:#f2f9fe}
 
 
   /* ══ THE BRAND PASS ══════════════════════════════════════════════════════════════════
@@ -1725,7 +1722,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f17';
+const BUILD = 'f18';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -17074,6 +17071,18 @@ function wipeStart(fn) {
   WIPE.on = 1;
   let done = 0;
   const fire = () => { if (done) return; done = 1; try { fn(); } catch (e) { console.warn('start:', e); } };
+  // ?nowipe -- THE ESCAPE HATCH AND THE DIAGNOSTIC IN ONE. If the tab still dies at tap-to-
+  // start with this on, the crash is not the wipe and I am looking in the wrong place; if it
+  // stops, it is. Either way he is in the game while that is being settled.
+  try {
+    if (/[?&]nowipe\b/.test(location.search)) {
+      const v = document.getElementById('veil');
+      if (v) { v.style.transition = 'none'; v.style.opacity = '1'; }
+      fire();
+      setTimeout(() => { if (v) { v.style.transition = 'opacity .9s ease-out'; v.style.opacity = '0'; } WIPE.on = 0; }, 80);
+      return;
+    }
+  } catch (_) {}
   try {
     if (!WIPE.url) WIPE.url = [cloudTex(0), cloudTex(1), cloudTex(2)];
     const g = document.createElement('div'); g.id = 'wipe';
@@ -17094,7 +17103,24 @@ function wipeStart(fn) {
     // there are two more bands of small ones either side of the middle so the frame has grit
     // in it. Speed spreads nearly three to one across the set, and every cloud takes a slice
     // of its band's stagger rather than the whole band moving as one.
-    const BANDS = [
+    // THE BUDGET, AND THIS FILE HAS ALREADY BLOWN IT ONCE. Every one of these is a composited
+    // layer the size of its own box: a 52vh cloud 2.4 times as wide as it is tall is 443 by
+    // 1063 CSS pixels, and at a device ratio of three that is 4.2 million pixels -- seventeen
+    // megabytes -- for ONE of them. Nineteen, asked for in a single frame, at the exact instant
+    // the diorama is being thrown away and the island's textures, shadow maps and render
+    // targets are being built. That is what "a problem repeatedly occurred" is: Safari killing
+    // the tab for memory, which the comment thirty lines above this says happened before.
+    //
+    // The near band was 38-52vh because that comment claimed it covered the frame by
+    // construction. It does not, and it no longer has to: the backing covers, so the clouds
+    // only have to look like clouds. Twelve on a phone instead of nineteen, none over 30vh --
+    // the biggest layer goes from about 17MB to about 5, and the set to roughly a fifth.
+    const BANDS = MOBILE ? [
+      { n: 5, h: [7, 11],  w: [2.0, 2.8], sp: 1.55, op: [.34, .50], lead: 0,   sc: 1,    slot: null, jit: .10 },
+      { n: 4, h: [13, 18], w: [1.9, 2.5], sp: 1.20, op: [.52, .70], lead: .06, sc: 1.02, slot: null, jit: .12 },
+      { n: 3, h: [22, 30], w: [1.8, 2.3], sp: .80,  op: [.96, 1.0], lead: .16, sc: 1.06,
+        slot: [0, 28, 56], hs: [28, 30, 26], jit: .08 },
+    ] : [
       { n: 7, h: [7, 12],  w: [2.1, 3.0], sp: 1.55, op: [.34, .50], lead: 0,   sc: 1,    slot: null, jit: .10 },
       { n: 5, h: [14, 20], w: [2.0, 2.7], sp: 1.20, op: [.50, .68], lead: .05, sc: 1.02, slot: null, jit: .12 },
       { n: 4, h: [23, 32], w: [1.8, 2.5], sp: .92,  op: [.72, .88], lead: .10, sc: 1.06, slot: null, jit: .12 },
@@ -17135,14 +17161,12 @@ function wipeStart(fn) {
     }
     const put = (el, x, y, sc) => 'translate3d(' + x + 'vw,' + y + 'vh,0) rotate(' + el._t[3]
       + 'deg) scale(' + sc + ') scaleX(' + el._t[5] + ')';
-    const fill = document.createElement('div'); fill.id = 'wipefill';
-    document.body.appendChild(fill);
     document.body.appendChild(g);
     // Up late in the close and down early in the part, so the lumpy edges are still what you
     // read on the way in and on the way out -- which is the whole point of the shape -- and
     // the only moment it is solid is the moment the two worlds are swapped.
-    setTimeout(() => { fill.style.opacity = '1'; }, (WIPE.inT * .62) * 1000);
-    setTimeout(() => { fill.style.opacity = '0'; }, (WIPE.inT + WIPE.hold + .10) * 1000);
+    setTimeout(() => { g.classList.add('fill'); }, (WIPE.inT * .62) * 1000);
+    setTimeout(() => { g.classList.remove('fill'); }, (WIPE.inT + WIPE.hold + .10) * 1000);
     requestAnimationFrame(() => requestAnimationFrame(() => {
       for (const el of els) {
         // Eased at both ends rather than driven in and yanked out: they arrive off their own
@@ -17161,7 +17185,7 @@ function wipeStart(fn) {
     // Not removed until the SLOWEST of them has finished leaving. The far band takes a third
     // longer than the rest, and cutting on the average is what takes them off mid-frame.
     let slow = 0; for (const el of els) slow = Math.max(slow, WIPE.outT * el._sp);
-    setTimeout(() => { g.remove(); fill.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + slow + .45) * 1000);
+    setTimeout(() => { g.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + slow + .45) * 1000);
   } catch (e) { console.warn('wipe skipped:', e); WIPE.on = 0; fire(); }
   setTimeout(fire, 2000);
 }
