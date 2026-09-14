@@ -806,6 +806,9 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
 (() => {
   const root = document.getElementById('majia-splash'), cv = document.getElementById('majia-stage');
   if (!root || !cv) return;
+  // ?splash: the studio block dissolves itself on its own timer, which would take the parked
+  // chase with it. Nailed open, so the flag holds the whole screen and not half of it.
+  try { if (/[?&]splash\b/.test(location.search)) window._MAJIA_HOLD = true; } catch (_) {}
   // RETIRED. This drew a painted floor, a horizon line and a light cone under the mark, and it
   // was a second stage fighting the 3D one -- two grounds, two lightings, and a bright cone
   // washing the logo out. There is no physical ground now; the only thing that says "floor" is
@@ -1366,7 +1369,7 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
         else all=false; }
       if(all)_bloomed=true; }
     if(window._BOOT_DJ!==false){ if(e>=(reduce?1300:(window._MAJIA_SETTLE_MS||3950)+_MAND))settle(); }   // the slowest-damped chips ring for ~1.4s; cutting at 2950 chopped their tail off               // DJ merge: settle + STAY (the gate's tap advances); boombox mode keeps the auto-fade
-    else if(e>=HOLD_UNTIL){ finish(); }
+    else if(e>=HOLD_UNTIL && !window._MAJIA_HOLD){ finish(); }   // ?splash parks the whole card
     if(reduce){ ctx.clearRect(0,0,W,H); drawSolid(1); drawEyebrow(1); drawPresents(1); return; }
     const lock=clamp01((e-LOCK_START)/(FREEZE_AT-LOCK_START));
     _majE=e;
@@ -1706,7 +1709,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f12';
+const BUILD = 'f13';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -15450,6 +15453,7 @@ CHASE.start = function (done) {
       p.renderOrder = -2;
       sc.add(p);
     }
+    try { this.hold = /[?&]splash\b/.test(location.search); } catch (_) { this.hold = false; }
     this.dir = Math.random() < .5 ? 1 : -1;
     this.q.rotation.y = this.c.rotation.y = this.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
     this.q.position.y = this.c.position.y = L.feet;
@@ -15472,7 +15476,15 @@ CHASE.tick = function () {
     this.cam.aspect = w / h; this.cam.updateProjectionMatrix();
   }
   for (const mx of this.mixers) mx.update(dt);
-  const t = (now - this.t0) / 1000, k = (t - L.enter) / L.T, vis = k > -.02 && k < 1.08;
+  // ?splash PARKS THEM. Judging this was the real problem and it was never the code: two
+  // 90-pixel characters cross the frame in 2.4 seconds, once, four seconds into a boot, and
+  // every look costs a full reload of the whole game. That is not enough to tell a 3px
+  // outline from none, which is how a change that was genuinely invisible and a change that
+  // was genuinely absent came to look identical from the sofa.
+  // With the flag they stop at mid-screen and the splash never hands off, so the thing can be
+  // held still and looked at.
+  const t = (now - this.t0) / 1000;
+  const k = this.hold ? .5 : (t - L.enter) / L.T, vis = k > -.02 && k < 1.08;
   this.q.visible = this.c.visible = this.qp.visible = this.cp.visible = vis;
   if (vis) {
     const x0 = -L.span * this.dir, x1 = L.span * this.dir;
@@ -15504,7 +15516,7 @@ CHASE.tick = function () {
   this.r.render(this.scene, this.cam);
   // Across, AND the mark has had its full run. Both are measured from the same instant -- the
   // moment the load finished and everything was seeded -- so they cannot drift apart.
-  if (t >= L.enter + L.T + L.tail && t >= L.hold) this.finish();
+  if (!this.hold && t >= L.enter + L.T + L.tail && t >= L.hold) this.finish();
 };
 CHASE.finish = function () {
   this.on = false;
