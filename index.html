@@ -1725,7 +1725,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f16';
+const BUILD = 'f17';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -20161,60 +20161,62 @@ function weaponPop(showing) {
 // the rig is scaled. Guessing costs him a look each time. So the offsets live in one table and
 // there is a tuner on the URL that nudges them with a thumb: see ?fit.
 const PACK = {
-  url: 'models/alien_jetpack.glb',
+  url: 'models/alien_accessories/alien_jetpack_02.glb',
   on: true,              // stops being true when there is a progression that grants it
-  // Everything below is in the RIG's own units, as fractions of his height, so a re-export at
-  // another scale does not move it.
-  size: .30,             // the pack's height, against his
-  at: [0, .02, -.10],    // from the spine joint: across, along, and out from his back
+  // HE RIGGED IT, WHICH CHANGES THE WHOLE JOB. The pack carries a joint called
+  // mixamorig_Spine1 -- the same name as the alien's -- and everything in the file is placed
+  // relative to it. So there is nothing to position: mate the two joints and the modeller's
+  // own placement is the answer. The offsets below are CORRECTIONS, zero by default, for the
+  // skew he warned about from the conversions between packages.
+  joint: 'spine1',
+  size: 1,               // 1 is "exactly as authored"
+  at: [0, 0, 0],         // corrections, in the joint's own units
   rot: [0, 0, 0],        // pitch, yaw, roll, in degrees
-  // Which joint. The highest spine the rig has, so it rides his shoulders rather than his
-  // waist -- a pack on the hips swings with every stride and reads as luggage.
-  bone: [/spine.?2$/i, /spine.?1$/i, /chest/i, /upperchest/i, /spine/i],
+  jets: ['jet_r', 'jet_l'],
 };
 function attachPack(r) {
   if (!PACK.on || !r || !r.root) return;
-  let bone = null, best = -1;
-  r.root.traverse(o => {
-    if (!o.isBone) return;
-    const nm = o.name.toLowerCase();
-    for (let i = 0; i < PACK.bone.length; i++) {
-      if (!PACK.bone[i].test(nm)) continue;
-      // earlier patterns win: the list is in order of preference, not of discovery
-      if (best < 0 || i < best) { best = i; bone = o; }
-      break;
-    }
-  });
-  if (!bone) { console.warn('[pack] no spine joint on the rig; no jetpack'); return; }
+  // The alien's own joint, matched on the end of the name because an exporter is free to
+  // prefix them -- the same rule attachWeapon uses.
+  let bone = null;
+  r.root.traverse(o => { if (!bone && o.isBone && o.name.toLowerCase().endsWith(PACK.joint)) bone = o; });
+  if (!bone) { console.warn('[pack] the rig has no ' + PACK.joint + ' joint; no jetpack'); return; }
+  // AND THE ARMATURE'S SCALE, read rather than assumed, because it is the entire conversion.
+  // Measured in both files: the alien's Armature node carries scale 0.01 and its bones are
+  // therefore in hundredths, while the jetpack's Armature carries 1 and its contents are in
+  // metres. A child dropped on that bone at identity would come out a hundredth of the size.
+  // Reading it off the node means a re-export at another scale fixes itself.
+  let arm = bone, as = 1;
+  while (arm) { if (/armature/i.test(arm.name || '')) { as = Math.abs(arm.scale.x) || 1; break; } arm = arm.parent; }
   loadModel(PACK.url, e => {
     const inst = cloneModel(e.root);
-    const g = new THREE.Group(); g.add(inst);
-    // The model is one unit tall in its own file (measured: 0.943 x 1.000 x 0.536, sitting on
-    // y = 0), so the fit is one division -- and it is done against the BONE's scale, not the
-    // world's, because a joint in these exports carries a hundredth-scale of its own and a
-    // child of it inherits that.
-    const h = Math.max(1e-4, e.box.max.y - e.box.min.y);
-    inst.scale.setScalar(1 / h); inst.position.y = -e.box.min.y / h;   // one unit tall, on its origin
-    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
-    bone.add(g);
-    weap.pack = g; weap.packBone = bone; weap.packN = 10;
+    // The node in the PACK with the same name. Its subtree is the whole pack -- the mesh and
+    // both nozzles hang off it -- so lifting it out and mating it is the entire mount.
+    let mate = null;
+    inst.traverse(o => { if (!mate && (o.name || '').toLowerCase().endsWith(PACK.joint)) mate = o; });
+    if (!mate) { console.warn('[pack] no ' + PACK.joint + ' in the jetpack; falling back to its root'); mate = inst; }
+    const jets = [];
+    inst.traverse(o => {
+      const nm = (o.name || '').toLowerCase();
+      for (const j of PACK.jets) if (nm.endsWith(j)) jets.push(o);
+      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; }
+    });
+    bone.add(mate);                                   // out of its own armature, onto his spine
+    weap.pack = mate; weap.packBone = bone; weap.packArm = as; weap.packN = 10;
+    weap.packJet = jets;
+    if (jets.length !== 2) console.info('[pack] ' + jets.length + ' nozzle joints found (wanted 2)');
     fitPack();
   }, () => console.warn('[pack] the jetpack did not load'));
 }
 // Read off PACK every time rather than baked in at attach, so the tuner moves it live.
+const _pkJ = new THREE.Vector3();
 const _pkE = new THREE.Euler(), _pkP = new THREE.Vector3(), _pkQ = new THREE.Quaternion(), _pkS = new THREE.Vector3();
 function fitPack() {
-  const g = weap.pack, bone = weap.packBone; if (!g || !bone) return PACK;
-  // MEASURED, NOT ASSUMED. A child of a bone is in the BONE's units, and in these exports that
-  // is not the world's by a long way -- the armature carries a hundredth-scale and the rig is
-  // then normalised to RIG.height on top of it, so "0.3" as a local scale could be anything on
-  // screen. Reading the bone's own world scale and dividing it out makes PACK.size and PACK.at
-  // mean what they say: fractions of HIS height, in world units, whatever the file did.
-  bone.updateWorldMatrix(true, false);
-  bone.matrixWorld.decompose(_pkP, _pkQ, _pkS);
-  const bs = (Math.abs(_pkS.x) + Math.abs(_pkS.y) + Math.abs(_pkS.z)) / 3;
-  const k = RIG.height / (bs > 1e-9 ? bs : 1);
-  g.scale.setScalar(PACK.size * k);
+  const g = weap.pack; if (!g) return PACK;
+  // Identity, times the armature conversion. He aligned the joint against the alien's own GLB,
+  // so "where it goes" is already in the file and the only thing left is the unit mismatch.
+  const k = PACK.size / (weap.packArm || 1);
+  g.scale.setScalar(k);
   g.position.set(PACK.at[0] * k, PACK.at[1] * k, PACK.at[2] * k);
   g.quaternion.setFromEuler(_pkE.set(PACK.rot[0] * Math.PI / 180, PACK.rot[1] * Math.PI / 180,
                                      PACK.rot[2] * Math.PI / 180, 'YXZ'));
@@ -22906,11 +22908,34 @@ function updatePlayer(dt) {
           // the word -- and every one after it starts at the flame. That is the crack at
           // ignition and the putt-putt-putt after it, which is the whole shape he asked for.
           const first = !p.jetLit; p.jetLit = 1;
+          // OUT OF THE NOZZLES, now that there are nozzles. jet_R and jet_L are joints in the
+          // pack, so they are wherever his spine has put them this frame -- they lean when he
+          // leans and they swing when he turns, which is the whole reason to read a joint
+          // rather than to offset from his feet. jointChart takes a bone's world position back
+          // onto the flat chart, which is the space every collider and effect in this file
+          // lives in; a bone is on the SPHERE and mixing the two is a standing landmine here.
+          const nz = weap.packJet;
           const a = Math.random() * Math.PI * 2, r = Math.random() * .30;
-          puffSpawn(p.pos.x + Math.cos(a) * r, p.pos.y + .55, p.pos.z + Math.sin(a) * r,
-            first ? JET.blast : JET.puff * rnd(.82, 1.18),
-            -p.vx * .18 + Math.cos(a) * 1.1, -JET.drift, -p.vz * .18 + Math.sin(a) * 1.1,
-            first ? 'jet' : 'puff');
+          const sz = first ? JET.blast : JET.puff * rnd(.82, 1.18);
+          if (nz && nz.length) {
+            // Alternated rather than both at once: two nozzles firing in step is one nozzle
+            // with an echo. Left, right, left -- which is also what "putt putt putt" sounds
+            // like coming out of a thing with two of them.
+            p.jetSide = (p.jetSide || 0) ^ 1;
+            const pick = nz[p.jetSide % nz.length];
+            jointChart(pick, _pkJ);
+            puffSpawn(_pkJ.x, _pkJ.y, _pkJ.z, sz * .82,
+              -p.vx * .18 + Math.cos(a) * .7, -JET.drift, -p.vz * .18 + Math.sin(a) * .7,
+              first ? 'jet' : 'puff');
+            if (first && nz.length > 1) {             // the crack comes out of both
+              jointChart(nz[(p.jetSide + 1) % nz.length], _pkJ);
+              puffSpawn(_pkJ.x, _pkJ.y, _pkJ.z, sz * .82, 0, -JET.drift, 0, 'jet');
+            }
+          } else {
+            puffSpawn(p.pos.x + Math.cos(a) * r, p.pos.y + .55, p.pos.z + Math.sin(a) * r, sz,
+              -p.vx * .18 + Math.cos(a) * 1.1, -JET.drift, -p.vz * .18 + Math.sin(a) * 1.1,
+              first ? 'jet' : 'puff');
+          }
         }
       } else {
         p.jetLit = 0; p.jetT = 0;
