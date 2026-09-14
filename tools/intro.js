@@ -23,7 +23,7 @@ const ctx2d = () => ({ createRadialGradient(){return {addColorStop(){}}}, create
   set font(v){}, get font(){return '';}, set fillStyle(v){}, set strokeStyle(v){}, set lineWidth(v){},
   set lineJoin(v){}, set lineCap(v){}, set textAlign(v){}, set textBaseline(v){}, set shadowColor(v){},
   set shadowBlur(v){}, set globalCompositeOperation(v){}, set globalAlpha(v){} });
-global.document={ createElement(t){ if(t==='canvas') return {width:0,height:0,getContext:ctx2d};
+global.document={ addEventListener(){}, removeEventListener(){}, createElement(t){ if(t==='canvas') return {width:0,height:0,getContext:ctx2d};
   const d={children:[],style:{setProperty(){},removeProperty(){}},dataset:{},title:'',className:'',hidden:false,addEventListener(){},classList:{toggle(){},add(){},remove(){},contains(){return false}},querySelector(){return this.__k||(this.__k=global.document.createElement('div'))},getBoundingClientRect(){return {left:0,top:0,width:132,height:132}},setPointerCapture(){},appendChild(c){this.children.push(c);c.parent=this},removeChild(c){const i=this.children.indexOf(c);if(i>=0)this.children.splice(i,1)},remove(){if(this.parent)this.parent.removeChild(this)},get firstChild(){return this.children[0]},set textContent(v){},set innerHTML(v){}}; return d;},
   createElementNS(ns, t){ if(t==='img') return {addEventListener(){},removeEventListener(){},style:{},set src(v){},get src(){return '';}}; return this.createElement(t); },
   getElementById(id){ return els[id]||(els[id]=this.createElement('div')); }, body:{appendChild(){},classList:{add(){},remove(){},toggle(){}}},

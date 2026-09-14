@@ -66,6 +66,24 @@
   html,body{margin:0;height:100%;overflow:visible;background:#070418;font-family:Georgia,"Iowan Old Style",serif;color:#f0e7d4;
     touch-action:none;overscroll-behavior:none;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;
     -webkit-user-select:none;user-select:none}
+  /* THE MAGNIFYING GLASS THAT POPS UP OVER THE STICK, and no, it is not something to live
+     with. It is iOS's text-selection loupe, and it arrives because a fast double-tap-and-hold
+     on a phone is indistinguishable from "select the word under my thumb" unless the page has
+     said otherwise. Three things say otherwise and only one of them was here:
+       user-select:none  -- was already on html,body, and is an inherited property, but WebKit
+                            does not honour it on every shadow-DOM-ish internal, so it is
+                            restated on everything.
+       -webkit-touch-callout:none -- WAS MISSING ENTIRELY. This is the one that suppresses the
+                            callout bar and the loupe on a long press. Nothing else does it.
+       -webkit-user-drag:none -- stops a held image becoming a drag, which on an <img> (the
+                            boot splash is one) brings the same panel up.
+     The sticks already preventDefault their own pointerdown; what was getting through was
+     every tap that landed a few pixels OFF one, on the canvas or the HUD, where nothing did.
+     The NOTES panel is exempted below, because text you might want to copy is the one place
+     selection is a feature rather than an accident. */
+  *{-webkit-touch-callout:none;-webkit-user-drag:none}
+  #sticks,#sticks *,#hud,#hud *,#map,#map *,canvas{-webkit-user-select:none;user-select:none}
+  #notes,#notes *{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
   /* ONE BOX, AND IT IS THE ONE YOU CAN SEE.
      "The screen moves up": at the very beginning nothing is wrong, and then the whole picture
      shifts and leaves a band along the bottom. That is iOS moving its URL bar, and the reason
@@ -1630,7 +1648,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f07';
+const BUILD = 'f09';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -17729,20 +17747,35 @@ function skySolo(m) { SKY.solo = (m === 'env' || m === 'plate' || m === 'off') ?
 // straight alpha. Then PUFF.url = 'art/puff.png', or isle.puff('art/puff.png') live.
 const PUFF = {
   url: null,          // a PNG of his own, when there is one; null draws the placeholder
-  cols: 4,            // a square sheet, cols x cols cells
-  frames: 16,
+  cols: 6,            // a square sheet, cols x cols cells: 36 frames
   fps: 8,             // 24 over 3: the stutter IS the style
-  jet0: 4,            // where an ordinary jet puff starts: past the spark and the word
   size: 2.6,          // the card, in world units
   cell: 128,          // placeholder resolution per cell
+  // WHICH CELLS EACH EFFECT OWNS, as [first, count]. One sheet, one material, one draw call,
+  // and a different look per thing that makes one -- which is the whole of what he asked for.
+  // A bank is only a WINDOW into the sheet, so the same twelve drawings give six effects:
+  // start two frames in and the crack at the front is simply not played.
+  //
+  // AND THE JET HAS NO WORD. He was right and I over-applied it: a motor running is not a
+  // punchline, and an onomatopoeia on every putt is a joke told four times a second. The word
+  // belongs where there is ONE event to name -- a rocket leaving the tube, a thing being hit.
+  bank: {
+    jet:    [0, 12],   // the ignition: a spark, then flame going to smoke
+    puff:   [2, 10],   // every putt after it: flame to smoke, no crack, no word
+    launch: [12, 12],  // out of a tube: spark, POW, flame, a long smoke
+    trail:  [17, 7],   // what the rocket leaves behind it: the tail end of the same run
+    boom:   [24, 12],  // a hit: the star, BOOM, and debris going grey
+    hit:    [29, 7],   // a small hit, same debris, no word -- a blaster bolt, not a rocket
+  },
 };
+// The longest bank, so puffStep knows when a slot is certainly spent without asking per point.
+PUFF.life = Object.keys(PUFF.bank).reduce((m, k) => Math.max(m, PUFF.bank[k][1]), 1) / PUFF.fps;
 let _puff = null;
 function puffTex() {
   const S = PUFF.cell, N = PUFF.cols, cv = document.createElement('canvas');
   cv.width = cv.height = S * N;
   const g = cv.getContext('2d');
-  const cx0 = (i) => (i % N) * S, cy0 = (i) => ((i / N) | 0) * S;
-  // a lumpy blob: a ring of arcs at wobbling radii, filled once, so the edge reads as drawn
+  // a lumpy blob: a ring of points at wobbling radii, filled once, so the edge reads as drawn
   const blob = (cx, cy, r, lumps, seed, fill) => {
     g.beginPath();
     for (let i = 0; i <= 48; i++) {
@@ -17753,7 +17786,6 @@ function puffTex() {
     }
     g.closePath(); g.fillStyle = fill; g.fill();
   };
-  // a spiky star
   const star = (cx, cy, r, pts, inner, seed, fill) => {
     g.beginPath();
     for (let i = 0; i < pts * 2; i++) {
@@ -17764,40 +17796,65 @@ function puffTex() {
     }
     g.closePath(); g.fillStyle = fill; g.fill();
   };
-  for (let f = 0; f < PUFF.frames; f++) {
-    const ox = cx0(f), oy = cy0(f), c = S * .5, cx = ox + c, cy = oy + c;
+  // A word, drawn rather than typeset: a fat dark outline under a hot fill, so it survives
+  // being forty pixels across on a phone and still reads as ink on top of the render.
+  const word = (txt, k, tilt) => {
+    const sc = .85 + k * .40;
+    g.rotate(tilt + k * .07); g.scale(sc, sc);
+    star(0, 0, S * .42, 9, .52, 2.2, 'rgba(255,168,64,' + (.55 - k * .38) + ')');
+    g.font = 'bold ' + (S * (txt.length > 3 ? .30 : .38)) + 'px Impact, Haettenschweiler, "Arial Black", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineJoin = 'round'; g.lineWidth = S * .105;
+    g.strokeStyle = 'rgba(22,14,28,' + (.94 - k * .5) + ')'; g.strokeText(txt, 0, 0);
+    g.fillStyle = 'rgba(255,246,214,' + (1 - k * .55) + ')'; g.fillText(txt, 0, 0);
+  };
+  const flame = (r, k, f) => {
+    blob(0, 0, r, 3, f * .9, 'rgba(255,132,44,' + (.92 - k * .22) + ')');
+    blob(0, -r * .12, r * (.66 - k * .16), 4, f * 1.4, 'rgba(255,206,110,' + (.95 - k * .25) + ')');
+    if (k < .7) blob(0, -r * .2, r * (.36 - k * .2), 5, f * 2.1, 'rgba(255,250,238,1)');
+  };
+  const smoke = (c, k, f, warm) => {
+    const r = c * (.50 + k * .46), a = (1 - k) * .74;
+    const grey = (warm ? 238 : 226) - k * 76;
+    const rgb = (d) => ((grey - d) | 0) + ',' + ((grey - d - 8) | 0) + ',' + ((grey - d - 18) | 0);
+    blob(0, 0, r, 3, f * .7, 'rgba(' + rgb(0) + ',' + a + ')');
+    blob(-r * .34, r * .20, r * .62, 4, f * 1.3, 'rgba(' + rgb(26) + ',' + (a * .9) + ')');
+    blob(r * .30, -r * .16, r * .52, 4, f * 2.0, 'rgba(255,255,255,' + (a * .5) + ')');
+  };
+  for (let f = 0; f < N * N; f++) {
+    const ox = (f % N) * S, oy = ((f / N) | 0) * S, c = S * .5;
     g.save(); g.beginPath(); g.rect(ox, oy, S, S); g.clip();
-    if (f < 2) {
-      // ---- the crack: a white star with hot spikes ----
-      const k = f / 1;
-      star(cx, cy, c * (.52 + k * .34), 7 + f, .30, f * 1.7, 'rgba(255,214,150,' + (.95 - k * .3) + ')');
-      star(cx, cy, c * (.34 + k * .22), 6, .34, f * 1.1 + .6, 'rgba(255,252,242,1)');
-    } else if (f < 4) {
-      // ---- the word. Drawn, not typeset: a fat outline so it survives being tiny ----
-      const k = (f - 2) / 1, sc = .9 + k * .35;
-      g.translate(cx, cy); g.rotate(-.18 + k * .1); g.scale(sc, sc);
-      star(0, 0, c * .82, 9, .52, 2.2, 'rgba(255,168,64,' + (.55 - k * .35) + ')');
-      g.font = 'bold ' + (S * .40) + 'px Impact, Haettenschweiler, "Arial Black", sans-serif';
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.lineJoin = 'round'; g.lineWidth = S * .10;
-      g.strokeStyle = 'rgba(24,16,30,' + (.92 - k * .5) + ')'; g.strokeText('POK', 0, 0);
-      g.fillStyle = 'rgba(255,246,214,' + (1 - k * .55) + ')'; g.fillText('POK', 0, 0);
-    } else if (f < 8) {
-      // ---- the flame: a teardrop, hot core, cooling and shrinking ----
-      const k = (f - 4) / 3;
-      const r = c * (.76 - k * .18);
-      g.translate(cx, cy + c * .10 * k);
-      blob(0, 0, r, 3, f * .9, 'rgba(255,132,44,' + (.92 - k * .22) + ')');
-      blob(0, -r * .12, r * (.66 - k * .16), 4, f * 1.4, 'rgba(255,206,110,' + (.95 - k * .25) + ')');
-      if (k < .7) blob(0, -r * .2, r * (.36 - k * .2), 5, f * 2.1, 'rgba(255,250,238,1)');
-    } else {
-      // ---- the smoke: three lumps, expanding, greying, going out ----
-      const k = (f - 8) / (PUFF.frames - 9);
-      const r = c * (.52 + k * .44), a = (1 - k) * .74;
-      const grey = 232 - k * 78;
-      blob(0 + cx, cy, r, 3, f * .7, 'rgba(' + (grey | 0) + ',' + ((grey - 8) | 0) + ',' + ((grey - 18) | 0) + ',' + a + ')');
-      blob(cx - r * .34, cy + r * .20, r * .62, 4, f * 1.3, 'rgba(' + ((grey - 26) | 0) + ',' + ((grey - 34) | 0) + ',' + ((grey - 44) | 0) + ',' + (a * .9) + ')');
-      blob(cx + r * .30, cy - r * .16, r * .52, 4, f * 2.0, 'rgba(255,255,255,' + (a * .5) + ')');
+    g.translate(ox + c, oy + c);
+    // ---- 0..11  THE JET. No word: a motor is not a punchline. ----
+    if (f < 12) {
+      if (f < 2) {                                   // the crack at ignition
+        const k = f;
+        star(0, 0, c * (.50 + k * .30), 7 + f, .32, f * 1.7, 'rgba(255,214,150,' + (.95 - k * .3) + ')');
+        star(0, 0, c * (.32 + k * .20), 6, .34, f * 1.1 + .6, 'rgba(255,252,242,1)');
+      } else if (f < 5) { const k = (f - 2) / 2; g.translate(0, c * .10 * k); flame(c * (.74 - k * .16), k, f); }
+      else smoke(c, (f - 5) / 6, f, true);
+    }
+    // ---- 12..23  OUT OF A TUBE. Spark, the word, flame, and a long tail of smoke. ----
+    else if (f < 24) {
+      const j = f - 12;
+      if (j < 2) {
+        const k = j;
+        star(0, 0, c * (.62 + k * .32), 9, .26, j * 2.1, 'rgba(255,190,92,' + (.96 - k * .28) + ')');
+        star(0, 0, c * (.40 + k * .22), 7, .30, j * 1.3, 'rgba(255,252,242,1)');
+      } else if (j < 4) word('POW', (j - 2), -.20);
+      else if (j < 7) { const k = (j - 4) / 2; flame(c * (.80 - k * .18), k, f); }
+      else smoke(c, (j - 7) / 4, f, true);
+    }
+    // ---- 24..35  A HIT. The star, BOOM, and debris going grey. ----
+    else {
+      const j = f - 24;
+      if (j < 3) {
+        const k = j / 2;
+        // Sharper and colder than the launch: many thin spikes, an impact rather than a burn.
+        star(0, 0, c * (.56 + k * .40), 12, .20, j * .9, 'rgba(255,236,190,' + (.95 - k * .25) + ')');
+        star(0, 0, c * (.34 + k * .26), 9, .24, j * 1.9, 'rgba(255,255,252,1)');
+      } else if (j < 5) word('BOOM', (j - 3), .16);
+      else smoke(c, (j - 5) / 6, f, false);
     }
     g.restore();
   }
@@ -17811,36 +17868,38 @@ function puffInit() {
   const N = 220;                       // the pool. A dead one is discarded in the shader.
   const gm = new THREE.BufferGeometry();
   const pos = new Float32Array(N * 3), born = new Float32Array(N), seed = new Float32Array(N),
-        size = new Float32Array(N), f0 = new Float32Array(N);
+        size = new Float32Array(N), f0 = new Float32Array(N), len = new Float32Array(N);
   born.fill(-1e9);                     // everything starts spent
   gm.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   gm.setAttribute('aBorn', new THREE.BufferAttribute(born, 1));
   gm.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
   gm.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
   gm.setAttribute('aF0', new THREE.BufferAttribute(f0, 1));
+  gm.setAttribute('aLen', new THREE.BufferAttribute(len, 1));
   const tex = PUFF.url ? new THREE.TextureLoader().load(PUFF.url) : puffTex();
   tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, depthTest: true, fog: false,
     uniforms: { uT: { value: 0 }, uSheet: { value: tex }, uScale: { value: 600 },
-      uCols: { value: PUFF.cols }, uFrames: { value: PUFF.frames }, uFps: { value: PUFF.fps } },
+      uCols: { value: PUFF.cols }, uFps: { value: PUFF.fps } },
     vertexShader:
-      'attribute float aBorn; attribute float aSeed; attribute float aSize; attribute float aF0;\n' +
+      'attribute float aBorn; attribute float aSeed; attribute float aSize; attribute float aF0; attribute float aLen;\n' +
       'uniform float uT, uScale;\n' +
-      'varying float vAge; varying float vSeed; varying float vF0;\n' +
+      'varying float vAge; varying float vSeed; varying float vF0; varying float vLen;\n' +
       'void main(){\n' +
-      '  vAge = uT - aBorn; vSeed = aSeed; vF0 = aF0;\n' +
+      '  vAge = uT - aBorn; vSeed = aSeed; vF0 = aF0; vLen = aLen;\n' +
       '  vec4 mv = modelViewMatrix * vec4(position, 1.0);\n' +
       '  gl_PointSize = aSize * uScale / max(0.001, -mv.z);\n' +
       '  gl_Position = projectionMatrix * mv;\n' +
       '}',
     fragmentShader:
-      'uniform sampler2D uSheet; uniform float uCols, uFrames, uFps;\n' +
-      'varying float vAge; varying float vSeed; varying float vF0;\n' +
+      'uniform sampler2D uSheet; uniform float uCols, uFps;\n' +
+      'varying float vAge; varying float vSeed; varying float vF0; varying float vLen;\n' +
       'void main(){\n' +
       // THE STEP. floor of age times eight: it holds each drawing for three film frames.
+      // The window is the BANK's, per point, so one sheet plays six different effects.
       '  float f = vF0 + floor(vAge * uFps);\n' +
-      '  if (vAge < 0.0 || f >= uFrames) discard;\n' +
+      '  if (vAge < 0.0 || f >= vF0 + vLen) discard;\n' +
       // The card's own UV, spun about its centre off the seed. gl_PointCoord runs top-down,
       // so v is flipped to match the sheet's rows.
       '  vec2 uv = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y) - 0.5;\n' +
@@ -17861,14 +17920,16 @@ function puffInit() {
   pts.userData.flat = true;            // ...which is also why the planet wrap must leave it alone
   pts.renderOrder = 4;
   scene.add(pts);
-  _puff = { pts, gm, pos, born, seed, size, f0, N, i: 0,
+  _puff = { pts, gm, pos, born, seed, size, f0, len, N, i: 0,
     vel: new Float32Array(N * 3), mat, tex };
   return _puff;
 }
-// Chart-space position in, one puff out. `kind` 0 is the whole sequence -- spark, word, flame,
-// smoke -- and 1 is an ordinary jet puff, which starts past the bang.
+// Chart-space position in, one puff out. `bank` names which window of the sheet it plays --
+// 'jet', 'puff', 'launch', 'trail', 'boom', 'hit' -- so adding a look to a new weapon is a
+// row of drawing in puffTex and a line in PUFF.bank, not another particle system.
 const _pfV = new THREE.Vector3();
-function puffSpawn(x, y, z, sz, vx, vy, vz, kind) {
+function puffSpawn(x, y, z, sz, vx, vy, vz, bank) {
+  const bk = PUFF.bank[bank] || PUFF.bank.puff;
   const P = puffInit(), i = P.i; P.i = (P.i + 1) % P.N;
   planetPos(x, y, z, _pfV);
   P.pos[i * 3] = _pfV.x; P.pos[i * 3 + 1] = _pfV.y; P.pos[i * 3 + 2] = _pfV.z;
@@ -17879,7 +17940,7 @@ function puffSpawn(x, y, z, sz, vx, vy, vz, kind) {
   P.vel[i * 3 + 1] = _pfV.y - P.pos[i * 3 + 1];
   P.vel[i * 3 + 2] = _pfV.z - P.pos[i * 3 + 2];
   P.born[i] = world.clock; P.seed[i] = Math.random();
-  P.size[i] = sz || PUFF.size; P.f0[i] = kind ? PUFF.jet0 : 0;
+  P.size[i] = sz || PUFF.size; P.f0[i] = bk[0]; P.len[i] = bk[1];
 }
 function puffStep(dt) {
   const P = _puff; if (!P) return;
@@ -17887,7 +17948,9 @@ function puffStep(dt) {
   // Point size in pixels for a card of `aSize` world units, done properly rather than tuned:
   // half the framebuffer height over the tangent of half the vertical lens.
   P.mat.uniforms.uScale.value = renderer.domElement.height * .5 / Math.tan(camera.fov * Math.PI / 360);
-  const life = PUFF.frames / PUFF.fps;
+  // The longest bank decides when a slot is certainly spent. Cheaper than a per-point test
+  // and it only ever holds a slot a little longer than it needed.
+  const life = PUFF.life;
   let live = 0;
   for (let i = 0; i < P.N; i++) {
     const age = world.clock - P.born[i];
@@ -17909,6 +17972,7 @@ function puffStep(dt) {
   P.gm.attributes.aSeed.needsUpdate = true;
   P.gm.attributes.aSize.needsUpdate = true;
   P.gm.attributes.aF0.needsUpdate = true;
+  P.gm.attributes.aLen.needsUpdate = true;
 }
 // ---------- the jetpack ----------
 // GIVEN TO HIM OUTRIGHT FOR NOW, and `has` is the line that stops being true when there is a
@@ -17942,7 +18006,8 @@ function setPuff(url) {
   return PUFF.url || 'drawn placeholder';
 }
 window.isle = { puff: setPuff, PUFF, JET,
-  pop: (k) => puffSpawn(player.pos.x, player.pos.y + 1.4, player.pos.z, JET.blast, 0, 1.2, 0, k || 0),
+  // isle.pop('boom') / 'launch' / 'hit' / 'jet': one of each, at head height, to look at.
+  pop: (k) => puffSpawn(player.pos.x, player.pos.y + 1.4, player.pos.z, JET.blast, 0, 1.2, 0, k || 'jet'),
   player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, tame: TAME,
   // isle.domesticate() takes the nearest creature into the fold, so the colour and the friend
   // state can be looked at before the pasture that will call it properly exists.
@@ -21715,6 +21780,14 @@ bindStick(document.getElementById('stkR'), stick.R, () => {
   else if (ACT.now) { /* held, not tapped */ }
   else if (!player.aboard) player.jump = 1;
 }, meleeFlick, 1);    // relative: a tap on it is a tap, wherever on the pad it lands
+// The other half of the loupe fix. `selectstart` is what WebKit fires the instant it decides
+// a gesture is a selection; refusing it there stops the whole sequence -- loupe, handles and
+// callout bar -- before any of it is drawn. `gesturestart` is iOS's pinch, which the viewport
+// meta already forbids and Safari offers anyway. NOTES keeps both, being the one thing here
+// with text worth copying out of it.
+const _selOK = t => { while (t && t !== document) { if (t.id === 'notes') return true; t = t.parentNode; } return false; };
+document.addEventListener('selectstart', e => { if (!_selOK(e.target)) e.preventDefault(); });
+document.addEventListener('gesturestart', e => { if (!_selOK(e.target)) e.preventDefault(); }, { passive: false });
 const keys = {};
 addEventListener('keydown', e => {
   // On the title screen every key is the start key, and none of them is a movement key --
@@ -22400,7 +22473,7 @@ function updatePlayer(dt) {
           puffSpawn(p.pos.x + Math.cos(a) * r, p.pos.y + .55, p.pos.z + Math.sin(a) * r,
             first ? JET.blast : JET.puff * rnd(.82, 1.18),
             -p.vx * .18 + Math.cos(a) * 1.1, -JET.drift, -p.vz * .18 + Math.sin(a) * 1.1,
-            first ? 0 : 1);
+            first ? 'jet' : 'puff');
         }
       } else {
         p.jetLit = 0; p.jetT = 0;
