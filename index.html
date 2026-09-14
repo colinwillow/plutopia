@@ -1722,7 +1722,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f21';
+const BUILD = 'f22';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -20212,7 +20212,10 @@ const PACK = {
   // So the cone, which is already built running down its own group's -Y, wanted nothing doing
   // to it. Rotating the group 180 on top of that was a second flip, which is why they came out
   // of the top of him like candles. Zero.
-  flame: { r: .085, len: .40, dir: [0, 0, 0], col: '#ff9a3c', hot: '#fff0c8' },
+  // TURQUOISE, not fire. He wants high-octane -- the colour a jet burns when it is burning
+  // clean and hot, which is the blue end, not the orange one. Additive over the bloom at 0.76
+  // does the rest.
+  flame: { r: .055, len: .26, dir: [0, 0, 0], col: '#2fd6ff', hot: '#ecffff' },
 };
 function attachPack(r) {
   if (!PACK.on || !r || !r.root) return;
@@ -20251,17 +20254,11 @@ function attachPack(r) {
     for (const j of jets) {
       const f = new THREE.Group();
       const mk = (col, k) => {
-        const c = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 10, 1, true),
+        const c = new THREE.Mesh(flameGeo(),
           new THREE.MeshBasicMaterial({ color: new THREE.Color(col).convertSRGBToLinear(),
             transparent: true, opacity: k, blending: THREE.AdditiveBlending,
             depthWrite: false, side: THREE.DoubleSide, toneMapped: false, fog: false }));
         c.frustumCulled = false;
-        // ConeGeometry is built APEX UP, base down, about its own middle. Turned over so the
-        // apex is down, then shifted so the wide MOUTH sits exactly on the joint and the point
-        // runs away below it. It therefore already points down the group's -Y before `dir`
-        // touches it -- which is the thing to check first if these ever come out inverted
-        // again, because `dir` is a correction and not the aim.
-        c.position.y = -.5; c.rotation.x = Math.PI;
         f.add(c); return c;
       };
       f.userData.out = mk(PACK.flame.col, .85);
@@ -20295,6 +20292,24 @@ function fitPack() {
     f.userData.in.scale.set(F.r * .52, F.len * .70, F.r * .52);
   }
   return PACK;
+}
+// THE OFFSET GOES IN THE GEOMETRY, NOT IN position, and this is the whole of why the flames
+// were down by his shins with his nozzles sitting empty three feet above them. An Object3D's
+// matrix is compose(position, quaternion, SCALE) -- the scale applies to the MESH, never to
+// its own position. So `c.position.y = -0.5` with `c.scale.y = 0.26` did not put the mouth on
+// the joint and the tip a quarter-unit below it: it shrank the cone to a quarter-unit and then
+// dropped the whole thing half a unit, leaving it hanging in mid-air under its own mount.
+// Bake the turn and the shift into the VERTICES instead and the unit cone runs from a mouth at
+// y = 0 to a point at y = -1. Scaling it then does exactly what scaling should: the mouth
+// stays welded to the joint and only the flame gets longer.
+// One geometry for all four cones -- it is forty triangles and there is no reason for four.
+let _flameG = null;
+function flameGeo() {
+  if (_flameG) return _flameG;
+  const g = new THREE.ConeGeometry(1, 1, 10, 1, true);   // apex at +.5, wide base at -.5
+  g.rotateX(Math.PI);                                    // apex now at -.5, base at +.5
+  g.translate(0, -.5, 0);                                // base to 0, apex to -1
+  return (_flameG = g);
 }
 // Lit while the drive is on, and never steady: a flame that does not flicker is a cone. The
 // length carries the thrust so easing off visibly shortens it, and the two cones flicker out
