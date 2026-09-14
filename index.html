@@ -1722,7 +1722,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f20';
+const BUILD = 'f21';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -22283,6 +22283,27 @@ const stick = { L: { x: 0, y: 0 }, R: { x: 0, y: 0 } };
 // also just a better thumbstick: you never have to find the middle of the pad first.
 function bindStick(el, out, onTap, onFlick, rel) {
   const knob = el.querySelector('.knob');
+  // THE GLASS PANEL THAT LIFTS OFF THE STICK ON A LONG PRESS. It is not something he switched
+  // on in accessibility -- it is Safari's drag-and-drop LIFT: hold a finger on almost anything
+  // and iOS takes a snapshot of it, rounds the corners, and floats it under the thumb ready to
+  // be dropped somewhere. Which is charming on a photo and ruinous on a control you are
+  // supposed to be holding down, since the sprint IS a long press.
+  //
+  // f09 turned off the callout, the loupe and text selection, and those were real fixes for
+  // the magnifier -- but they do not touch this, and neither does the preventDefault the
+  // pointerdown below already does. THAT IS THE WHOLE POINT: on iOS the pointer events are
+  // synthesised FROM the touch events, so cancelling a pointer event cancels nothing the touch
+  // layer had planned. The lift is decided at touchstart, and only a non-passive touchstart
+  // listener gets to refuse it.
+  // Safe to refuse here specifically: these pads are driven entirely by pointerdown/move/up,
+  // which still fire. What preventDefault suppresses is the compatibility mouse events, the
+  // scroll, the callout and the lift -- none of which this control wants. It is NOT done
+  // blanket-wide, because on an ordinary button the same call would eat the click.
+  for (const ev of ['touchstart', 'touchmove', 'touchend']) {
+    el.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+  }
+  el.setAttribute('draggable', 'false');
+  if (knob) knob.setAttribute('draggable', 'false');
   let id = null, t0 = 0, far = 0, lx = 0, ly = 0, ox = 0, oy = 0; const RAD = 52;
   const set = (cx, cy) => {
     let dx, dy;
@@ -22326,6 +22347,12 @@ bindStick(document.getElementById('stkR'), stick.R, () => {
 // callout bar -- before any of it is drawn. `gesturestart` is iOS's pinch, which the viewport
 // meta already forbids and Safari offers anyway. NOTES keeps both, being the one thing here
 // with text worth copying out of it.
+// Everything else that can be held: the attribute alone, and no preventDefault, because on a
+// real button eating touchstart eats the click that follows it.
+addEventListener('load', () => {
+  try { for (const b of document.querySelectorAll('button, canvas, img, .knob')) b.setAttribute('draggable', 'false'); }
+  catch (_) {}
+});
 const _selOK = t => { while (t && t !== document) { if (t.id === 'notes') return true; t = t.parentNode; } return false; };
 document.addEventListener('selectstart', e => { if (!_selOK(e.target)) e.preventDefault(); });
 document.addEventListener('gesturestart', e => { if (!_selOK(e.target)) e.preventDefault(); }, { passive: false });
