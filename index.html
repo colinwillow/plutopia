@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e99';
+const BUILD = 'f02';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -5743,12 +5743,21 @@ function cullFar(dt) {
   // is already the pass that asks what is near enough to matter, and three times a second is
   // exactly the right rate for a thing with forty units of hysteresis on it.
   if (baseSite) baseSite.lampTick();
+  // THE VEIL, which is the other half of his idea and the half that actually buys the frame:
+  // while he is standing in the station, the island's plants, creatures and structures are
+  // not drawn at all. The terrain and the sea are left alone on purpose -- from four hundred
+  // units up, through a glass dome, the island as a shape is the view out of the window, and
+  // it is a handful of draw calls. What is not the view is nine hundred trees.
+  const veil = !!(baseSite && baseSite.inside());
   const tiny = camS.r > 240;
   const x = cam.tgt.x, z = cam.tgt.z;
   for (const list of [world.plants, world.structures, world.creatures])
     for (const o of list) {
+      if (!o.alive || !o.g) continue;
+      // His own ship is the exception: it is parked on the pad next to him.
+      if (veil) { if (o !== world.ship) { o.g.visible = false; o.farHid = true; } continue; }
       const r = FAR[o.constructor.name];
-      if (!r || !o.alive || !o.g) continue;
+      if (!r) continue;
       if (tiny && TINY[o.constructor.name]) { o.g.visible = false; o.farHid = true; continue; }
       // Never hide one that is in the air or in his arms: those two are the moments you are
       // certainly looking at it, and a distance test on a body that is being moved by
@@ -11265,8 +11274,42 @@ function flameMat(hot, cool, dia = 1, alpha = 1) {
 // height or a dropped frame, steps straight over it and the test reports the ground far
 // below. That is falling through it. Given both ends of the step, the deck catches anything
 // that was above it a moment ago, which is what a floor is.
+// ---------- the station, and the column of air under it ----------
+// THE BASE IS NOT ON THE ISLAND ANY MORE. It was, for one build, and the answer was seven
+// frames a second -- because a forty-unit building with two hundred and ninety nodes and
+// forty-five materials was being drawn on top of a whole island that was already spending
+// the frame. Instancing and the light fix bought a lot of that back, but the structural
+// answer is his and it is better: it is his SHIP, it is in orbit, and you fly up to it. Then
+// the island and the station are never in the same frame competing for the same sixteen
+// milliseconds -- you are either down there or up here.
+//
+// It costs nothing to look at from the ground, because nothing is fetched until you are on
+// your way: the colliders go up at worldgen, the GLB is not asked for until you are inside
+// `load`, and the whole group is switched out of the scene again when you leave.
+const ORBIT = {
+  alt: 430,        // its floor, in chart units over the flat chart -- about the planet's own
+                   // radius, which is where spaceK has the sky most of the way to black
+  padR: 9,         // the landing pad, in the doc's metres, out past the 270-degree arch
+  padAt: 30,       // and how far out along that corridor its middle is
+  load: 300,       // the GLB is fetched the first time you are this close
+  show: 360,       // and the group is in the scene inside this
+  col: 90,         // the column of air under it, in which the drive will push
+  from: 55,        // above this altitude, and no lower: the assist is for the climb, not for
+  boost: 34,       // getting off the ground. climb 8.4 -> 42.4 against vdrag .62 is about
+                   // 68 a second, so four hundred units is six or seven, not three quarters
+                   // of a minute of holding the stick up.
+};
 function deckY(x, z, y, y0) {
-  const g = groundY(x, z), isle = world.isle;
+  const g = groundY(x, z);
+  // The station's pad. This is the whole docking mechanic and it is four lines, because the
+  // ship's landing, its flare, its touchdown and `leave()` all ask exactly this question --
+  // what is under me -- and none of them care that the answer is four hundred units up.
+  if (baseSite && baseSite.padR) {
+    const hi = (y0 === undefined || y0 < y) ? y : y0;
+    if (hi > baseSite.floorY - 1.6 &&
+        Math.hypot(x - baseSite.padX, z - baseSite.padZ) < baseSite.padR) return baseSite.floorY;
+  }
+  const isle = world.isle;
   if (!isle || !isle.alive) return g;
   const dx = x - isle.pos.x, dz = z - isle.pos.z;
   if (Math.hypot(dx, dz) > isle.R * .94) return g;
@@ -11654,6 +11697,22 @@ class Ship {
     const aF = fwd > 0 ? fwd * P.thrust : fwd * P.reverse, aS = str * P.strafe;
     this.vel.x += (fx * aF - lx * aS) * dt; this.vel.z += (fz * aF - lz * aS) * dt;
     this.vel.y += (P.g * this.power - P.g + up * P.climb * this.power) * dt;
+    // THE COLUMN. Inside it, and above the treetops, the drive has a great deal more to give
+    // -- which is the difference between "fly up to your ship" and forty-six seconds of
+    // holding a stick. It pushes both ways: coming down under it is a descent, not a fall
+    // out of the sky, and the flare at the bottom is untouched because this cuts out well
+    // above it.
+    if (baseSite && alt > ORBIT.from && Math.hypot(this.pos.x - baseSite.x, this.pos.z - baseSite.z) < ORBIT.col) {
+      this.vel.y += up * ORBIT.boost * this.power * dt;
+      if (up > .3 && !this.inCol) {
+        this.inCol = 1;
+        // "It only loads up above a certain area." This is that line: the file is asked for
+        // the moment he commits to the climb, which buys the six seconds of ascent to fetch
+        // it in. The distance test in lampTick is only the fallback.
+        if (!baseSite.asked) { baseSite.asked = true; baseSite.fetch(); }
+        logMsg('The drive bites. Straight up, and the sky starts going out.');
+      }
+    } else this.inCol = 0;
     this.vel.x *= Math.max(0, 1 - P.drag * dt); this.vel.z *= Math.max(0, 1 - P.drag * dt); this.vel.y *= Math.max(0, 1 - P.vdrag * dt);
     // The flare. Inside the last dozen units the descent is bled off against how much is
     // left, so coming down anywhere near a surface settles onto the feet instead of
@@ -13116,21 +13175,20 @@ function instanceRepeats(root, min) {
 }
 function buildBase(x, z, yaw) {
   const K = BASE.k, sy = Math.sin(yaw), cy = Math.cos(yaw);
-  const floorY = groundY(x, z) + BASE.lift;
+  const floorY = ORBIT.alt;                                // no ground under it: it is in orbit
   // Site-local (already in metres, before k) to chart. The group is turned about the local up
   // by `yaw`, so this is that same rotation done by hand for the colliders, which live in the
   // flat chart rather than under the group.
   const W = (lx, lz) => ({ x: x + (lx * cy + lz * sy) * K, z: z + (-lx * sy + lz * cy) * K });
-  clearGrass(x, z, BASE.atrium * K + 6);
-  clearGrass(x + (BASE.garden.x * cy + BASE.garden.z * sy) * K,
-             z + (-BASE.garden.x * sy + BASE.garden.z * cy) * K, BASE.garden.r * K + 5);
 
   const g = new THREE.Group();
   g.position.set(x, floorY, z);
-  // Level, not leaned. Everything else on the island tips with the ground under it; a building
-  // forty units across cannot, or its far side is four units into the hill.
+  // Level, not leaned. The scene.add wrapper puts it on the sphere at this height, so it hangs
+  // over the berth with the planet's own up through it -- which is what "in orbit over the
+  // place you take off from" has to mean on a world that curves.
   g.quaternion.setFromAxisAngle(_plY, yaw);
-  g.userData.what = 'alien base';
+  g.userData.what = 'the station';
+  g.visible = false;                                       // until you are on your way up to it
   scene.add(g);
 
   const obs = [];
@@ -13150,6 +13208,10 @@ function buildBase(x, z, yaw) {
     }
   }
   deck(BASE.garden.x, BASE.garden.z, BASE.garden.r, 0);
+  // THE PAD, out past the 270-degree arch: the one flat thing off the island a ship can put
+  // its feet on. deckY answers for it, which is all the docking there needs to be.
+  const padL = { x: Math.sin(Math.PI * 1.5) * ORBIT.padAt, z: Math.cos(Math.PI * 1.5) * ORBIT.padAt };
+  deck(padL.x, padL.z, ORBIT.padR, 0);
 
   // ---- the walls that stop you ----
   // A ring of circles with a gap at each arch, which is exactly how the dome hut's wall is
@@ -13174,6 +13236,14 @@ function buildBase(x, z, yaw) {
       const r = BASE.atrium + t * BASE.corr;
       for (const sgn of [1, -1]) solid(s * r + c * sgn * BASE.corrHalf, c * r - s * sgn * BASE.corrHalf, .78);
     }
+  }
+  // AND A WALL ACROSS THE FAR END OF THE 30-DEGREE CORRIDOR, because the other two go
+  // somewhere -- 150 to the garden, 270 to the pad -- and that one used to open onto the
+  // island under it. It now opens onto four hundred units of air.
+  {
+    const a = 30 * Math.PI / 180, s2 = Math.sin(a), c2 = Math.cos(a), r = BASE.atrium + BASE.corr;
+    for (let u = -BASE.corrHalf; u <= BASE.corrHalf + .01; u += .8)
+      solid(s2 * r + c2 * u, c2 * r - s2 * u, .78);
   }
   // The garden's own wall, with a gap where the corridor comes in.
   {
@@ -13224,19 +13294,65 @@ function buildBase(x, z, yaw) {
     }
   }
 
+  // WHAT YOU CAN SEE FROM DOWN THERE. The station itself is not in the scene until you are
+  // most of the way to it, which leaves nothing to aim at -- and "fly up to your ship" is not
+  // a mechanic if you cannot tell where up is. One sprite, on its own little group so the
+  // planet wrap positions it, with sizeAttenuation off so it holds its size on screen: from
+  // the ground it is a hard bright point that does not move with the stars, which is exactly
+  // what a thing in a fixed orbit over your berth should look like.
+  const bg = new THREE.Group();
+  bg.position.set(x, floorY, z);
+  {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: new THREE.Color(0xbdf2ff),
+      transparent: true, opacity: .95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, sizeAttenuation: false }));
+    // ARITHMETIC, NOT TASTE, because sizeAttenuation off does not mean "scale is in screen
+    // fractions" -- the sprite shader multiplies the scale BY the view depth to cancel the
+    // perspective divide, so the quad's half-extent ends up scale/2 of a unit distance. The
+    // lens is 46 degrees vertical, so half the screen is tan(23) = .424 of that: .018 is a
+    // quad about two per cent of screen height, and glowTex's core is smaller again. .055,
+    // which is what this said first, would have been a blob a seventh of the screen across.
+    sp.scale.set(.018, .018, 1);
+    bg.add(sp);
+  }
+  scene.add(bg);
+
+  const padW = W(padL.x, padL.z);
   const st = { alive: true, pos: new THREE.Vector3(x, floorY, z), x, z, g, obs, yaw, k: K, floorY, lights,
-    lampG, lampOn: false,
+    padX: padW.x, padZ: padW.z, padR: ORBIT.padR * K, bg,
+    lampG, lampOn: false, asked: false, shown: false,
+    // How far he is from it, in three dimensions, because the whole point of this thing is
+    // that the distance that matters is mostly straight up.
+    away() {
+      const p = world.player && world.player.pos;
+      if (!p) return 1e9;
+      return Math.hypot(p.x - this.x, p.y - this.floorY, p.z - this.z);
+    },
+    // Aboard it: on his feet, over its floor, inside its footprint. This is what veils the
+    // island -- see cullFar.
+    inside() {
+      const p = world.player;
+      return !!p && !p.aboard && p.pos.y > this.floorY - 26
+        && Math.hypot(p.pos.x - this.x, p.pos.z - this.z) < 95;
+    },
+    // THE STREAM, and it is the whole answer to "the whole world's not competing with it".
+    // Nothing is fetched until he is on his way up; the group leaves the scene when he goes
+    // back down; the lamps are only in it while he is close enough for them to be worth a
+    // recompile of every material in the scene.
     lampTick() {
-      const d = Math.hypot(cam.tgt.x - x, cam.tgt.z - z);
+      const d = this.away();
+      if (!this.asked && d < ORBIT.load) { this.asked = true; this.fetch(); }
+      const show = this.shown ? d < ORBIT.show * 1.15 : d < ORBIT.show;
+      // The beacon gives way to the real thing, and takes over again on the way home.
+      if (show !== this.shown) { this.shown = show; this.g.visible = show; this.bg.visible = !show; }
       const on = this.lampOn ? d < BASE.lightR * 1.4 : d < BASE.lightR;
       if (on === this.lampOn) return;
       this.lampOn = on;
       if (on) this.g.add(this.lampG); else this.g.remove(this.lampG);
     },
-    update() {}, dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); baseSite = null; } };
+    update() {}, dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); scene.remove(this.bg); baseSite = null; } };
   baseSite = st;
 
-  loadModel(BASE.url, e => {
+  st.fetch = () => loadModel(BASE.url, e => {
     const inst = cloneModel(e.root);
     inst.scale.setScalar(K);
     // ---- the materials ----
@@ -13290,8 +13406,10 @@ function buildBase(x, z, yaw) {
     const r = instanceRepeats(inst, BASE.instMin);
     console.info('[base] ' + r.gone + ' repeated nodes folded into ' + r.made + ' instanced draws');
     g.add(inst); st.model = inst;
-  }, () => console.warn('[base] the alien base did not load; its colliders are still there'));
-  return { x, z };
+  }, () => console.warn('[base] the station did not load; its colliders are still there'));
+  // ?base wants to be standing in it before the first frame, not three hundred units under it.
+  if (/[?&]base\b/.test(location.search)) { st.asked = true; st.fetch(); st.shown = true; g.visible = true; bg.visible = false; }
+  return st;
 }
 
 // ---------- the dome hut, built rather than loaded ----------
@@ -13699,19 +13817,21 @@ function buildSites() {
       console.info('[site] the poachers are camped at ' + ps.x.toFixed(0) + ', ' + ps.z.toFixed(0)); }
     else console.warn('[site] nowhere on the terrace for the poachers');
   }
-  // THE BASE. It wants more flat ground than anything else on the island -- forty units of
-  // atrium and a garden wing thirty out from it -- so it is asked for first, with the widest
-  // clearance, and it is the one site allowed to fall back to bare flat land if no biome will
-  // have it. Somewhere to come home to is worth more than somewhere picturesque.
+  // THE STATION, and it takes no ground at all any more. It used to be asked for first and
+  // with the widest clearance of anything on the island -- forty units of atrium and a garden
+  // wing thirty out from it -- and the flattest quarter-acre on the map went to a building
+  // that then cost the frame. It hangs over the berth instead, four hundred and thirty units
+  // up, and the flat ground it was taking is back in the pot for everything else.
+  //
+  // Over the BERTH specifically: "a specific area you fly up from" should be the place the
+  // ship already lives, so that going home is one stick held up rather than a thing you have
+  // to find. world.berth is chosen before this runs.
   {
-    const bs = siteSpot('base', ['pasture', 'scrub', 'coast'], 1.8, 13, .14, [26, 21, 17, 13], out)
-      || randomLand(1.6, 14, .2, 400, 12) || randomLand(1.4, 16, .3);
-    if (bs) {
-      const yaw = rnd(Math.PI * 2);
-      out.push(buildBase(bs.x, bs.z, yaw));
-      world.base = { x: bs.x, z: bs.z, yaw };
-      console.info('[site] the base stands at ' + bs.x.toFixed(0) + ', ' + bs.z.toFixed(0));
-    }
+    const bs = world.berth || { x: 0, z: 0 };
+    const yaw = rnd(Math.PI * 2);
+    buildBase(bs.x, bs.z, yaw);
+    world.base = { x: bs.x, z: bs.z, yaw, y: ORBIT.alt };
+    console.info('[site] the station is in orbit at ' + bs.x.toFixed(0) + ', ' + bs.z.toFixed(0) + ', ' + ORBIT.alt + ' up');
   }
   // Near the berth on purpose: it is a thing to go and look at rather than a thing to find.
   {
@@ -17381,12 +17501,13 @@ const RIG = {
     if (/[?&]base\b/.test(location.search) && world.base) {
       const b = world.base, K = BASE.k, s2 = Math.sin(b.yaw), c2 = Math.cos(b.yaw);
       const lx = 0, lz = 10.4;
-      sp = { x: b.x + (lx * c2 + lz * s2) * K, z: b.z + (-lx * s2 + lz * c2) * K };
+      sp = { x: b.x + (lx * c2 + lz * s2) * K, z: b.z + (-lx * s2 + lz * c2) * K, y: b.y + .1 };
     }
   } catch (_) {}
-  player.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z);
+  player.pos.set(sp.x, sp.y !== undefined ? sp.y : Math.max(height(sp.x, sp.z), SEA), sp.z);
   g.position.copy(player.pos);
   cam.tgt.set(sp.x, player.pos.y + 3.4, sp.z);
+  player.gy = player.pos.y;
   loadRig(g);
 })();
 world.player = player;
@@ -23181,7 +23302,7 @@ function mapMarks() {
   // zoom in to find is no use for finding somebody.
   for (const c of world.creatures) if (c.alive && c instanceof Poacher && !c.carried)
     out.push({ x: c.pos.x, z: c.pos.z, k: 'poacher' });
-  if (world.base) out.push({ x: world.base.x, z: world.base.z, k: 'ship', label: 'the base' });
+  if (world.base) out.push({ x: world.base.x, z: world.base.z, k: 'ship', label: 'the station, overhead' });
   if (MAP.way) out.push({ x: MAP.way.x, z: MAP.way.z, k: 'way', label: 'waypoint' });
   return out;
 }
