@@ -1725,7 +1725,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f15';
+const BUILD = 'f16';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -18276,7 +18276,12 @@ function setPuff(url) {
   if (_puff) { scene.remove(_puff.pts); _puff.gm.dispose(); _puff.mat.dispose(); _puff.tex.dispose(); _puff = null; }
   return PUFF.url || 'drawn placeholder';
 }
-window.isle = { puff: setPuff, PUFF, JET, PACK, pack: o => { if (o) Object.assign(PACK, o); fitPack(); return PACK; },
+// PACK is NOT listed as a bare value here. This object literal is evaluated at module level,
+// a long way above where PACK is declared, and a const read above its own declaration takes
+// the rest of the file with it. Inside an arrow it is read at CALL time and is fine. That
+// is the sixteenth time in this file and the second time this week; check:intro caught both.
+window.isle = { puff: setPuff, PUFF, JET,
+  pack: o => { if (o) Object.assign(PACK, o); fitPack(); return PACK; },
   // isle.pop('boom') / 'launch' / 'hit' / 'jet': one of each, at head height, to look at.
   pop: (k) => puffSpawn(player.pos.x, player.pos.y + 1.4, player.pos.z, JET.blast, 0, 1.2, 0, k || 'jet'),
   player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, tame: TAME,
