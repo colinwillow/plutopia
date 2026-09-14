@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f03';
+const BUILD = 'f05';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -2752,6 +2752,29 @@ const _pmP = new THREE.Vector3(), _pmQ = new THREE.Quaternion();
 function planetUpdateMatrix() {
   if (this.parent !== scene) return _stockUpdateMatrix.call(this);
   planetQ(this.position.x, this.position.z, _pmQ).multiply(this.quaternion);
+  planetPos(this.position.x, this.position.y, this.position.z, _pmP);
+  this.matrix.compose(_pmP, _pmQ, this.scale);
+  this.matrixWorldNeedsUpdate = true;
+}
+// AND A FEW THINGS ARE LEVEL WITH HIM INSTEAD. Same position on the sphere, but the frame
+// comes from where the PLAYER is standing rather than from the ground under the object. It is
+// for the floating isles, and it is a deliberate cheat: a rock hanging in the air a few
+// hundred units off is tipped fifteen or twenty degrees out of your own up by nothing but the
+// curve, and reads as falling over rather than as floating. Taken from his frame it stays
+// level, and the moment he is standing on it the two frames are the same one -- so there is
+// nowhere he can be that shows a seam.
+// OFF UNTIL THE GAME STARTS, and that is not fussiness. The title screen is a shot of the
+// whole planet from nine hundred units out with the name standing on one of these isles, and
+// its whole composition is the isle sitting ON the world -- take its frame from the player
+// instead and it hangs there tilted against the curve under it. A plain flag rather than a
+// read of INTRO.on, because INTRO is declared thirteen thousand lines below this and a const
+// read above its own declaration is the bug that has cost more builds in this file than
+// anything else.
+let levelOn = false;
+function levelUpdateMatrix() {
+  if (!levelOn || this.parent !== scene) return planetUpdateMatrix.call(this);
+  const p = (world.player && world.player.pos) || cam.tgt;
+  planetQ(p.x, p.z, _pmQ).multiply(this.quaternion);
   planetPos(this.position.x, this.position.y, this.position.z, _pmP);
   this.matrix.compose(_pmP, _pmQ, this.scale);
   this.matrixWorldNeedsUpdate = true;
@@ -11217,7 +11240,16 @@ const PILOT = {
   // 107 against the old 72, and the bigger thrust also fills the acceleration curve sooner --
   // it was a hair sluggish leaving the pad. Everything else that moves the hull comes up with
   // it, so a faster ship is not also a ship that cannot turn or climb to match.
-  thrust: 12.6, reverse: 5.6, drag: .118,       // forward: tops out near 107
+  thrust: 12.6, reverse: 8.0, drag: .118,       // forward: tops out near 107
+  // AND IT SHEDS IT WHEN YOU LET GO. Top speed is thrust over drag, so drag sets BOTH how
+  // fast it goes and how long it takes to stop -- and one number cannot give a ship that
+  // reaches a hundred and also pulls up in a reasonable distance. At .118 the time constant
+  // is eight and a half seconds: let go at cruise and it is still doing forty a second
+  // later, which is the "it takes forever" he watched.
+  // So drag is what it was while the throttle is IN and multiplied while it is out. Top speed
+  // is untouched; coasting gets a two-and-a-half second constant instead of eight and a half,
+  // and pulling back puts the reverse thrust on top of that. Braking is a thing you do.
+  coast: 3.4,
   strafe: 7.0,                                  // side jets, same drag
   climb: 8.4, vdrag: .62, g: 9.8,               // vertical: hover is neutral, push to go up or down
   yawA: 1.18, yawDrag: 1.2,                     // turning builds up, about .95 rad/s flat out, and carries on for a beat when released
@@ -11309,13 +11341,19 @@ function deckY(x, z, y, y0) {
     if (hi > baseSite.floorY - 1.6 &&
         Math.hypot(x - baseSite.padX, z - baseSite.padZ) < baseSite.padR) return baseSite.floorY;
   }
-  const isle = world.isle;
-  if (!isle || !isle.alive) return g;
-  const dx = x - isle.pos.x, dz = z - isle.pos.z;
-  if (Math.hypot(dx, dz) > isle.R * .94) return g;
-  const top = isle.g.position.y + isle.topH(dx, dz);
-  const hi = (y0 === undefined || y0 < y) ? y : y0;
-  return (top > g && hi > top - 1.6) ? top : g;   // above it, it is a deck; below it, fly under
+  // EVERY isle, not world.isle. There are two of these -- the one out over open water and the
+  // one the title stands on inland -- and only the first was ever in here, so the one he would
+  // actually fly at had no floor and he went straight through it.
+  let out = g;
+  const hi2 = (y0 === undefined || y0 < y) ? y : y0;
+  for (const isle of (world.isles || [])) {
+    if (!isle.alive) continue;
+    const dx = x - isle.pos.x, dz = z - isle.pos.z;
+    if (Math.hypot(dx, dz) > isle.R * .94) continue;
+    const top = isle.g.position.y + isle.topH(dx, dz);
+    if (top > out && hi2 > top - 1.6) out = top;   // above it, it is a deck; below it, fly under
+  }
+  return out;
 }
 class Ship {
   constructor(x, z, face) {
@@ -11713,7 +11751,8 @@ class Ship {
         logMsg('The drive bites. Straight up, and the sky starts going out.');
       }
     } else this.inCol = 0;
-    this.vel.x *= Math.max(0, 1 - P.drag * dt); this.vel.z *= Math.max(0, 1 - P.drag * dt); this.vel.y *= Math.max(0, 1 - P.vdrag * dt);
+    const dg = P.drag * (fwd > .12 ? 1 : P.coast);
+    this.vel.x *= Math.max(0, 1 - dg * dt); this.vel.z *= Math.max(0, 1 - dg * dt); this.vel.y *= Math.max(0, 1 - P.vdrag * dt);
     // The flare. Inside the last dozen units the descent is bled off against how much is
     // left, so coming down anywhere near a surface settles onto the feet instead of
     // arriving on them. It is what makes "get close to the ground and lower yourself onto
@@ -11986,6 +12025,12 @@ class FloatingIsle {
     const O = opt || {};
     this.alive = true; this.alt = alt; this.pos = new THREE.Vector3(x, alt, z);
     this.g = new THREE.Group(); this.g.position.copy(this.pos); scene.add(this.g);
+    this.g.updateMatrix = levelUpdateMatrix;              // level with him, not with the curve
+    // BOTH OF THEM, in a list. deckY -- which is what the ship's landing, its flare and its
+    // touchdown all ask what is underneath -- knew about `world.isle` and only that one, so
+    // the other isle, the one the title stands on and the one inland where he would actually
+    // fly at it, had no floor at all. He went straight through it.
+    (world.isles || (world.isles = [])).push(this);
     const R = this.R = O.R || 34, NA = this.NA = na === undefined ? rnd(Math.PI * 2) : na, cN = Math.cos(NA), sN = Math.sin(NA);
     const landY0 = O.landY === undefined ? SEA : O.landY;   // the caller's guess; the fall measures for itself below
     // Everything below the height field was written for a 34-unit island -- the spires, the
@@ -13174,6 +13219,10 @@ function instanceRepeats(root, min) {
   return { made, gone };
 }
 function buildBase(x, z, yaw) {
+  // Declared at the top of the function, not beside the beam it holds. A const or let read
+  // above its own declaration takes the rest of the file with it and node --check cannot see
+  // it; that has been the bug in here more times than anything else.
+  let st_beam = null, st_spr = null;
   const K = BASE.k, sy = Math.sin(yaw), cy = Math.cos(yaw);
   const floorY = ORBIT.alt;                                // no ground under it: it is in orbit
   // Site-local (already in metres, before k) to chart. The group is turned about the local up
@@ -13312,6 +13361,32 @@ function buildBase(x, z, yaw) {
   // what a thing in a fixed orbit over your berth should look like.
   const bg = new THREE.Group();
   bg.position.set(x, floorY, z);
+  // AND A PILLAR OF LIGHT DOWN TO THE BERTH, because two builds of a sprite four hundred
+  // units straight up taught the obvious thing: nobody looks up. The camera in this game sits
+  // behind him and slightly ABOVE, angled down; the one direction the station was in is the
+  // one direction the lens never points, and the map is flat so it cannot draw it either.
+  // A beam is the one shape that is visible from the ground without being looked for, and he
+  // already reads this vocabulary -- it is the waypoint's own beam, taller and thinner. It
+  // runs from the ground up to the floor of the station, so it says both WHERE and UP.
+  {
+    const h = floorY;
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 2.6, h, 12, 1, true),
+      new THREE.ShaderMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, fog: false,
+        uniforms: { uT: { value: 0 } },
+        vertexShader: 'varying float vY; void main(){ vY = uv.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        fragmentShader: 'uniform float uT; varying float vY;\n' +
+          // Brightest at the bottom where he is and at the very top where the thing is, thin
+          // through the middle, with a pulse running UP it -- the direction is the message.
+          'void main(){ float base = pow(1.0 - vY, 2.4) * 0.55;\n' +
+          '  float top = pow(vY, 6.0) * 0.75;\n' +
+          '  float run = 0.30 + 0.70 * pow(max(0.0, sin(vY * 26.0 - uT * 1.9)), 3.0);\n' +
+          '  float a = (base + top + 0.085) * run;\n' +
+          '  gl_FragColor = vec4(0.62, 0.88, 1.0, a * 0.55); }' }));
+    beam.material.userData.noHole = true;
+    beam.position.y = -h * .5;                           // bg sits at the station; this hangs under it
+    bg.add(beam); st_beam = beam;
+  }
   {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: new THREE.Color(0xbdf2ff),
       transparent: true, opacity: .95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, sizeAttenuation: false }));
@@ -13321,14 +13396,14 @@ function buildBase(x, z, yaw) {
     // lens is 46 degrees vertical, so half the screen is tan(23) = .424 of that: .018 is a
     // quad about two per cent of screen height, and glowTex's core is smaller again. .055,
     // which is what this said first, would have been a blob a seventh of the screen across.
-    sp.scale.set(.018, .018, 1);
-    bg.add(sp);
+    sp.scale.set(.026, .026, 1);
+    bg.add(sp); st_spr = sp;
   }
   scene.add(bg);
 
   const padW = W(padL.x, padL.z);
   const st = { alive: true, pos: new THREE.Vector3(x, floorY, z), x, z, g, obs, yaw, k: K, floorY, lights,
-    padX: padW.x, padZ: padW.z, padR: ORBIT.padR * K, bg,
+    padX: padW.x, padZ: padW.z, padR: ORBIT.padR * K, bg, beam: st_beam, spr: st_spr,
     lampG, lampOn: false, asked: false, shown: false, told: false,
     // How far he is from it, in three dimensions, because the whole point of this thing is
     // that the distance that matters is mostly straight up.
@@ -13352,8 +13427,9 @@ function buildBase(x, z, yaw) {
       const d = this.away();
       if (!this.asked && d < ORBIT.load) { this.asked = true; this.fetch(); }
       const show = this.shown ? d < ORBIT.show * 1.15 : d < ORBIT.show;
-      // The beacon gives way to the real thing, and takes over again on the way home.
-      if (show !== this.shown) { this.shown = show; this.g.visible = show; this.bg.visible = !show; }
+      // The beacon gives way to the real thing, and takes over again on the way home. The
+      // beam does NOT: it is how he gets back down to the berth as well as up to the station.
+      if (show !== this.shown) { this.shown = show; this.g.visible = show; this.spr.visible = !show; }
       // ONCE, THE FIRST TIME HE IS STANDING UNDER IT. The map mark gets him to the berth and
       // then stops being any help at all -- it is a flat map and the last four hundred units
       // of the trip are the one direction it cannot draw.
@@ -13426,7 +13502,7 @@ function buildBase(x, z, yaw) {
     g.add(inst); st.model = inst;
   }, () => console.warn('[base] the station did not load; its colliders are still there'));
   // ?base wants to be standing in it before the first frame, not three hundred units under it.
-  if (/[?&]base\b/.test(location.search)) { st.asked = true; st.fetch(); st.shown = true; g.visible = true; bg.visible = false; }
+  if (/[?&]base\b/.test(location.search)) { st.asked = true; st.fetch(); st.shown = true; g.visible = true; if (st.spr) st.spr.visible = false; }
   return st;
 }
 
@@ -16804,6 +16880,7 @@ function startGame() {
   if (!INTRO.on) return;
   // No veil: the cloud banks are already shut over this frame. See wipeStart.
   INTRO.on = false; INTRO.r0 = cam.r; INTRO.dive = INTRO.diveT;
+  levelOn = true;          // the floating isles start taking their up from him, not from the curve
   titleMarkFrame(0);
   // Hand the diorama back. It is a planet, a sky and a couple of dozen props that will never
   // be looked at again, and it is the one thing in this file that is genuinely disposable.
@@ -24008,6 +24085,9 @@ function frame(now) {
   updateWaypoint(dt);
   if (MAP.open) { clampView(); drawMap(); }
   drawMini(dt); showAct();
+  // The beam's pulse. Here and not in lampTick: that runs three times a second, which is a
+  // strobe rather than a drift.
+  if (baseSite && baseSite.beam) baseSite.beam.material.uniforms.uT.value = world.clock;
   weatherLeavings(dt); cullFar(dt); cullView(); cullCells(terrain); cullCells(water); stainTick(dt); beastTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
