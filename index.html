@@ -774,7 +774,10 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
 </script>
 <!-- ══ STUDIO MAJIA — animated boot splash (plays once on top, then fades to the title) ══ -->
 <div id="majia-splash" style="position:fixed;inset:0;z-index:100200;transition:opacity .65s ease;">
-  <div id="majia-bg" style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 42%,#1a1038 0%,#0d0820 62%,#070418 100%);transition:opacity .7s ease"></div>
+  <!-- The hotspot belongs behind the WORDMARK, which sits at about 43%, and it used to run
+     bright enough at 62% -- where the runners are -- to read as a light on them. Tightened, so
+     the lift is under the logo and the floor they cross is the flat dark it is meant to be. -->
+<div id="majia-bg" style="position:absolute;inset:0;background:radial-gradient(ellipse 66% 34% at 50% 40%,#1a1038 0%,#100a26 58%,#070418 100%);transition:opacity .7s ease"></div>
   <!-- THE STAGE, and it is deliberately a SEPARATE canvas under the mark's own. The MAJIA
        block below is lifted verbatim out of another repo and is meant to stay that way, so
        everything that makes this splash Plutopia's rather than the studio's lives here
@@ -1703,7 +1706,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f11';
+const BUILD = 'f12';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -15323,10 +15326,17 @@ const CHASE = {
   // HOLD_UNTIL, 5.22s after its timeline starts, and this canvas is a child of it -- which is
   // why the title arrived over two people still running. Across by 3.6s, hand off at 5.3s.
   L: { fov: 26, dist: 13, feet: -1.05, quarry: .40, chaser: .60, span: 2.9, enter: .9, T: 2.4, tail: .3, hold: 5.3 },
-  // The inverted hull's thickness, as a fraction of the model's own unscaled height, and its
-  // colour. Not black: the splash's ground is a deep indigo and true black on it reads as a
+  // The inverted hull's thickness, as a fraction of the model's own unscaled height.
+  // ARITHMETIC, NOT TASTE, and .009 was a guess that came out invisible. The lens is 26
+  // degrees at a standoff of 13, so the frame is 2 * 13 * tan(13) = 6.0 lens units tall. The
+  // chaser is .60 of those -- a tenth of the frame, about 90px on a 900px phone. An outline at
+  // .009 of his height is 0.8px. It was drawn correctly and could not be seen, which is the
+  // same mistake as the beacon sprite two builds ago: picking a number for a thing whose size
+  // is set by a projection, without doing the projection.
+  // .030 is about 2.7px at that size, which is a drawn line.
+  // Not black, either: the splash's ground is a deep indigo and true black on it reads as a
   // hole rather than as ink.
-  ink: .009, inkCol: '#160f2e',
+  ink: .030, inkCol: '#171030',
 };
 CHASE.dress = function (holder, url, height, clipName, speed) {
   loadModel(url, e => {
@@ -15424,9 +15434,20 @@ CHASE.start = function (done) {
     // additive, so every pixel of it that overlaps a body is added ON TOP of that body, which
     // is the white wash he saw. Pushed back in z and dropped below the feet, the bodies occlude
     // it -- depth testing does the rest -- and what is left is a glow at the floor line.
+    // UNDER THEM AND BEHIND THEM, and this time small enough that it cannot be anything else.
+    // It was .34 and .38 opacity at 2.4 and 2.1 times their width, centred two hundredths of a
+    // unit above the feet -- an additive disc wider than the character is tall, sitting in the
+    // same plane he does, so every soft pixel of it was ADDED to his legs. That is the
+    // spotlight, and that is the white.
+    // Depth alone was not enough to trust: a Sprite draws in the transparent pass, and relying
+    // on the body to reject it leaves the halo wherever the body is not. So it is also
+    // physically smaller and physically lower -- a pool at the floor line rather than a light
+    // in the frame.
     for (const p of [this.qp, this.cp]) {
       p.material.fog = false; p.material.depthTest = true;
-      p.position.y = L.feet - .07; p.position.z = -.45;
+      p.material.opacity *= .62;
+      p.position.y = L.feet - .085; p.position.z = -.8;
+      p.renderOrder = -2;
       sc.add(p);
     }
     this.dir = Math.random() < .5 ? 1 : -1;
@@ -15458,8 +15479,10 @@ CHASE.tick = function () {
     this.q.position.x = lerp(x0, x1, clamp(k, 0, 1));
     this.c.position.x = lerp(x0, x1, clamp(k - .13, 0, 1));
     this.qp.position.x = this.q.position.x; this.cp.position.x = this.c.position.x;
-    this.qp.scale.set(L.quarry * 2.4, L.quarry * .5, 1);
-    this.cp.scale.set(L.chaser * 2.1, L.chaser * .42, 1);
+    // Wider than tall, and MUCH flatter than before: .5 of his height was a dome round his
+    // knees, .17 is a smear on the ground.
+    this.qp.scale.set(L.quarry * 1.7, L.quarry * .19, 1);
+    this.cp.scale.set(L.chaser * 1.5, L.chaser * .17, 1);
     // FOOTFALLS, ON THE SPLASH. Two sets, offset, so it reads as two animals rather than one
     // with an echo -- and quiet, because this is under a logo and not in a fight.
     //
