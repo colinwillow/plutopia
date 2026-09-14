@@ -1722,7 +1722,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f18';
+const BUILD = 'f19';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -20197,6 +20197,15 @@ const PACK = {
   at: [0, 0, 0],         // corrections, in the joint's own units
   rot: [0, 0, 0],        // pitch, yaw, roll, in degrees
   jets: ['jet_r', 'jet_l'],
+  // THE BOOSTERS. Two cones hung off the nozzle joints, so they lean and swing with the pack
+  // exactly as the puffs do -- the difference is that these are CONTINUOUS while the thrust is
+  // on, and the puffs are discrete things thrown off it. A jet needs both: the flame says it
+  // is burning, the puffs say it is burning in bursts.
+  // Unlit and additive, like everything else in this game that is meant to be hot; the bloom
+  // at 0.76 does the glow. `dir` is which way is OUT of the nozzle, in degrees about the
+  // joint's own axes -- guessed at 180 (straight down its -Y) and tunable from ?fit, because
+  // the one thing no amount of reading settles is which way an exporter called down.
+  flame: { r: .085, len: .40, dir: [180, 0, 0], col: '#ff9a3c', hot: '#fff0c8' },
 };
 function attachPack(r) {
   if (!PACK.on || !r || !r.root) return;
@@ -20229,6 +20238,27 @@ function attachPack(r) {
     weap.pack = mate; weap.packBone = bone; weap.packArm = as; weap.packN = 10;
     weap.packJet = jets;
     if (jets.length !== 2) console.info('[pack] ' + jets.length + ' nozzle joints found (wanted 2)');
+    // A cone in a cone: a warm outer and a white core, both additive, both pointing the way
+    // the nozzle points. They hang on the joint, so they cost nothing per frame beyond a scale.
+    weap.packFlame = [];
+    for (const j of jets) {
+      const f = new THREE.Group();
+      const mk = (col, k) => {
+        const c = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 10, 1, true),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(col).convertSRGBToLinear(),
+            transparent: true, opacity: k, blending: THREE.AdditiveBlending,
+            depthWrite: false, side: THREE.DoubleSide, toneMapped: false, fog: false }));
+        c.frustumCulled = false;
+        // The cone is built point-up about its middle; shifted so its MOUTH is on the joint
+        // and it runs away down its own -Y, which is what `dir` then aims.
+        c.position.y = -.5; c.rotation.x = Math.PI;
+        f.add(c); return c;
+      };
+      f.userData.out = mk(PACK.flame.col, .85);
+      f.userData.in = mk(PACK.flame.hot, .95);
+      f.visible = false;
+      j.add(f); weap.packFlame.push(f);
+    }
     fitPack();
   }, () => console.warn('[pack] the jetpack did not load'));
 }
@@ -20244,7 +20274,37 @@ function fitPack() {
   g.position.set(PACK.at[0] * k, PACK.at[1] * k, PACK.at[2] * k);
   g.quaternion.setFromEuler(_pkE.set(PACK.rot[0] * Math.PI / 180, PACK.rot[1] * Math.PI / 180,
                                      PACK.rot[2] * Math.PI / 180, 'YXZ'));
+  // The flames are in the NOZZLE's units, which are the pack's, so they are sized against the
+  // model rather than against him -- and they do not want the armature conversion, being
+  // already inside it.
+  const F = PACK.flame;
+  for (const f of (weap.packFlame || [])) {
+    f.quaternion.setFromEuler(_pkE.set(F.dir[0] * Math.PI / 180, F.dir[1] * Math.PI / 180,
+                                       F.dir[2] * Math.PI / 180, 'YXZ'));
+    f.userData.out.scale.set(F.r, F.len, F.r);
+    f.userData.in.scale.set(F.r * .52, F.len * .70, F.r * .52);
+  }
   return PACK;
+}
+// Lit while the drive is on, and never steady: a flame that does not flicker is a cone. The
+// length carries the thrust so easing off visibly shortens it, and the two cones flicker out
+// of step so the core is not simply a smaller copy of the shell.
+function stepFlame(dt) {
+  const fl = weap.packFlame; if (!fl || !fl.length) return;
+  const k = player.jetK || 0;
+  const on = k > .02;
+  for (let i = 0; i < fl.length; i++) {
+    const f = fl[i];
+    if (f.visible !== on) f.visible = on;
+    if (!on) continue;
+    const t = world.clock * 34 + i * 2.1;
+    const a = k * (.72 + .28 * Math.sin(t) * Math.sin(t * .61));
+    const b = k * (.66 + .34 * Math.sin(t * 1.37 + 1.1));
+    f.userData.out.scale.y = PACK.flame.len * a;
+    f.userData.in.scale.y = PACK.flame.len * .70 * b;
+    f.userData.out.material.opacity = .85 * (.55 + .45 * a);
+    f.userData.in.material.opacity = .95 * (.55 + .45 * b);
+  }
 }
 // ---------- ?fit : placing a mounted thing with a thumb ----------
 // THE REASON THIS EXISTS. "The jetpack isn't rigged to a bone, which would be helpful for
@@ -20274,6 +20334,22 @@ const FIT_T = {
                + '  rot ' + PACK.rot.map(n => +n.toFixed(1)).join(', ')
                + '  size ' + (+PACK.size.toFixed(3)),
   },
+  // The flame is its own target because the question it answers is a different one: not where
+  // the pack sits -- that is solved -- but which way the exporter decided was out of a nozzle.
+  // x/y/z are the aim in degrees, size is the length, and the row labels lie a little in the
+  // service of there being one panel rather than two.
+  flame: {
+    get: i => i < 3 ? PACK.flame.dir[i] : i === 6 ? PACK.flame.len : i === 3 ? PACK.flame.r * 100 : 0,
+    set: (i, v) => {
+      if (i < 3) PACK.flame.dir[i] = v;
+      else if (i === 3) PACK.flame.r = Math.max(.01, v / 100);
+      else if (i === 6) PACK.flame.len = Math.max(.02, v);
+      fitPack();
+    },
+    show: () => 'dir ' + PACK.flame.dir.map(n => +n.toFixed(0)).join(', ')
+               + '  r ' + (+PACK.flame.r.toFixed(3)) + '  len ' + (+PACK.flame.len.toFixed(3))
+               + '   (x/y/z = aim in degrees, pitch = radius x100, size = length)',
+  },
   axe: {
     // AXEM stores its angles in radians; the panel speaks degrees so the numbers mean
     // something to a person turning them.
@@ -20299,9 +20375,10 @@ function fitBuild() {
   if (!FIT.on) return;
   const el = document.createElement('div'); el.id = 'fitpad';
   const tab = t => '<button data-w="' + t + '" class="fw' + (FIT.which === t ? ' on' : '') + '">' + t + '</button>';
+  const tabs = ['pack', 'flame', 'axe'];
   const draw = () => {
     const T = FIT_T[FIT.which];
-    el.innerHTML = '<div class="fh">' + tab('pack') + tab('axe') + '<button class="fw" data-say="1">log</button></div>'
+    el.innerHTML = '<div class="fh">' + tabs.map(tab).join('') + '<button class="fw" data-say="1">log</button></div>'
       + FIT.rows.map(([nm, i]) =>
           '<div class="fr"><b>' + nm + '</b><button data-i="' + i + '" data-s="-1">&minus;</button>'
           + '<i>' + (+T.get(i).toFixed(3)) + '</i>'
@@ -20314,7 +20391,9 @@ function fitBuild() {
     if (b.dataset.w) { FIT.which = b.dataset.w; draw(); return; }
     if (b.dataset.say) { logMsg(FIT.which + ': ' + FIT_T[FIT.which].show()); return; }
     const i = +b.dataset.i, sgn = +b.dataset.s, T = FIT_T[FIT.which];
-    const step = i < 3 ? FIT.dp : i < 6 ? FIT.dr : FIT.ds;
+    const step = FIT.which === 'flame'
+      ? (i < 3 ? 15 : i === 3 ? .5 : .04)
+      : (i < 3 ? FIT.dp : i < 6 ? FIT.dr : FIT.ds);
     T.set(i, T.get(i) + sgn * step);
     draw();
   });
@@ -25001,6 +25080,7 @@ function frame(now) {
   // The bone's world matrix is not meaningful on the frame the model lands, so the fit is
   // taken again for a few frames rather than once and wrong.
   if (weap.pack && weap.packN > 0) { weap.packN--; fitPack(); }
+  stepFlame(dt);
   puffStep(dt); weatherLeavings(dt); cullFar(dt); cullView(); cullCells(terrain); cullCells(water); stainTick(dt); beastTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
