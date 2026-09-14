@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f05';
+const BUILD = 'f06';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -17333,6 +17333,24 @@ const MOVE = {
   // How fast the velocity can be turned sideways, which is a separate question from how
   // fast it can be lengthened. A right angle at full speed takes about a third of a second.
   turn: 52, airTurn: 9, swimTurn: 16,
+  // HOW BRISKLY THE BODY COMES ROUND, and this is half of the boat. The facing eased at a
+  // flat 9 -- a 110ms time constant, so a right-angle stick flick swung him round in about a
+  // fifth of a second -- while the VELOCITY turns at `turn` above, which at top speed is
+  // about 3 radians a second, or a third of a second for the same right angle. The body
+  // therefore finished its turn while the momentum was still most of the way through the old
+  // direction: for a third of a second he faced one way and travelled another, pivoting on a
+  // point behind himself. That is a boat, and he named it exactly.
+  // Standing still he still snaps round. At a run he arcs, because a running man does.
+  face0: 11, face1: 5.2, faceAim: 17, faceRoll: 15,
+  // AND THE OTHER HALF: WHOSE DIRECTION THE LEGS PUSH IN. Below plantAt it is the thumb's,
+  // which is what makes a standing start go where you point. Above plantFull it is his OWN
+  // FACING -- so the two cannot come apart, and the way to change direction at a run is to
+  // turn, which is what "feet planted" means. Never while armed or aiming: travelling one way
+  // and facing another is the entire point of the strafes.
+  plantAt: 3, plantFull: 11,
+  // What a hard turn costs him. A runner slows to change direction; without this he can still
+  // corner at full speed, just facing the right way while he does it.
+  turnBrake: .42,
   // Uphill is work: the fraction of top speed left, against the gradient he is walking into.
   // The cost of a hill was LINEAR and floored early, so a gentle rise and a wall cost nearly
   // the same and neither cost much: 22 degrees took a fifth off him, 37 took less than half,
@@ -18591,7 +18609,12 @@ function setMove(m) {
 // its peak, so at 32 he covered 32 * 0.806 * 0.587 = 15.1 units -- five and a half body
 // lengths, and nearly a full second of running done in eight tenths. At 23 it is 10.9, which
 // is four, and still further than a step.
-const ROLL = { speed: 23, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, cool: .28, turn: 1 };
+// `lead` is how much of its speed the dodge has BEFORE he is round. The roll used to drive
+// him straight down the flicked direction on the frame the thumb crossed -- his body swung
+// after it, but the motion did not wait, so a flick behind him teleported him backwards
+// out of a run. Now it travels where his body HAS GOT ROUND TO, gated by how far round
+// that is, so the first sixth of a second is a plant and a pivot and then he goes.
+const ROLL = { speed: 23, skip: .12, end: 1.30, rate: 1.35, go: .88, time: .7, cool: .28, turn: 1, lead: .18 };
 // THE RUN. `k` is how much faster than his own top speed a sprint is; `at` is how far up the
 // right stick has to be pushed to mean it; `fov` is the lens opening that sells it, which is
 // most of what a game does to say "fast" and costs nothing. in/out are how quickly it comes on
@@ -21887,16 +21910,27 @@ function updatePlayer(dt) {
   if (lunging) {
     player.lungeT = Math.max(0, player.lungeT - dt);
     const k = player.lungeT / (player.lungeMax || .25);
-    const sp = player.lungeSp * (MELEE.tail + (1 - MELEE.tail) * k * k);
-    player.vx = Math.sin(player.lungeH) * sp; player.vz = Math.cos(player.lungeH) * sp;
-    player.wmag = 0;
+    // Along his BODY, gated by how far round it has got -- see ROLL.lead. Same reason.
+    let e = player.lungeH - player.faceH; e = Math.atan2(Math.sin(e), Math.cos(e));
+    const al = ROLL.lead + (1 - ROLL.lead) * Math.max(0, Math.cos(e));
+    const sp = player.lungeSp * (MELEE.tail + (1 - MELEE.tail) * k * k) * al;
+    player.vx = Math.sin(player.faceH) * sp; player.vz = Math.cos(player.faceH) * sp;
+    player.heading = player.lungeH; player.wmag = 0;
   }
   const rolling = player.rollT > 0;
   if (rolling) {
     player.rollT = Math.max(0, player.rollT - dt);
     const k = Math.min(1, (1 - player.rollT / (player.rollMax || ROLL.time)) / ROLL.go);
-    const sp = ROLL.speed * (1 - k * k);      // out of the crouch hard, and spent before he stands
-    player.vx = Math.sin(player.rollH) * sp; player.vz = Math.cos(player.rollH) * sp;
+    // HE TRAVELS WHERE HIS BODY HAS GOT ROUND TO. rollH is the intent -- heading is set to it
+    // below, and the facing eases onto it at MOVE.faceRoll -- but the motion is along faceH
+    // and scaled by how nearly the two agree. Flick behind him at a run and the first sixth of
+    // a second is a plant and a pivot with almost no travel in it; then the cosine opens and
+    // he goes. Before this, the velocity was set straight down rollH on the frame the thumb
+    // crossed, which is the teleport he watched.
+    let e = player.rollH - player.faceH; e = Math.atan2(Math.sin(e), Math.cos(e));
+    const al = ROLL.lead + (1 - ROLL.lead) * Math.max(0, Math.cos(e));
+    const sp = ROLL.speed * (1 - k * k) * al; // out of the crouch hard, and spent before he stands
+    player.vx = Math.sin(player.faceH) * sp; player.vz = Math.cos(player.faceH) * sp;
     player.heading = player.rollH; player.wmag = 0; player.moving = 1;
   }
   if (!player.fly) {
@@ -21958,9 +21992,31 @@ function updatePlayer(dt) {
         world.effects.push(new Burst(player.pos.x + rnd(-.4, .4), gy + .2, player.pos.z + rnd(-.4, .4), '#cdbf9c', 3, .3));
     }
     const max = (inW ? MOVE.swimMax : MOVE.max * (1 + SPRINT.k * player.sprint)) * hillK;
-    const want = player.wmag > .1 ? max * player.wmag : 0;
-    const tvx = want ? player.wx * want : 0, tvz = want ? player.wz * want : 0;
     const sp0 = Math.hypot(player.vx, player.vz);
+    // FEET, NOT A RUDDER. The target velocity was the thumb's direction, flat out, at any
+    // speed -- so the legs could push straight sideways out of a full run and the only thing
+    // resisting was MOVE.turn. Above plantFull the direction they push in is HIS OWN FACING
+    // instead, which is the thing that cannot be turned instantly; below plantAt it is still
+    // the thumb, because a standing start has to go where you point. The two blend across,
+    // and the facing itself now comes round more slowly the faster he is going, so the way
+    // to corner at a run is to turn through it.
+    // NOT WHILE ARMED OR AIMING. He has strafes and a reversed walk for exactly the case this
+    // would break: moving one way while facing another is what they are for.
+    const aimLock = player.aiming || player.shootT > 0 || player.throwAim || player.tossAim || player.armed > .5;
+    const plant = (onG && !inW && !aimLock && !rolling && !lunging) ? smooth(MOVE.plantAt, MOVE.plantFull, sp0) : 0;
+    let dvx = player.wx || 0, dvz = player.wz || 0, brake = 1;
+    if (plant > 1e-3) {
+      const hx = Math.sin(player.faceH), hz = Math.cos(player.faceH);
+      dvx += (hx - dvx) * plant; dvz += (hz - dvz) * plant;
+      const dl = Math.hypot(dvx, dvz);
+      if (dl > 1e-4) { dvx /= dl; dvz /= dl; } else { dvx = hx; dvz = hz; }
+      // And a hard turn costs him speed, which is what plants the feet rather than merely
+      // pointing them: he slows into the corner and picks it up on the way out.
+      let er = player.heading - player.faceH; er = Math.atan2(Math.sin(er), Math.cos(er));
+      brake = 1 - MOVE.turnBrake * plant * Math.min(1, Math.abs(er) / (Math.PI * .55));
+    }
+    const want = player.wmag > .1 ? max * player.wmag * brake : 0;
+    const tvx = want ? dvx * want : 0, tvz = want ? dvz * want : 0;
     // How long he has been asking, and how much of his legs that has bought him. Only on the
     // ground: swimming and the air have their own rates and neither has a standing start.
     player.goT = want ? (player.goT || 0) + dt : Math.max(0, (player.goT || 0) - dt * MOVE.pushOut);
@@ -22095,7 +22151,13 @@ function updatePlayer(dt) {
   g.position.copy(player.pos);
   // heading is where the stick points; faceH is where the body has got round to yet
   { let d = player.heading - player.faceH; d = Math.atan2(Math.sin(d), Math.cos(d));
-    player.faceH += d * Math.min(1, dt * (player.aiming || player.shootT > 0 || player.throwAim || player.tossAim ? 17 : 9)); }
+    // Snappy standing, slower at a run -- see MOVE.face0. The aim and the dodge keep their own
+    // brisk rates: an aim that lags is a gun that misses, and a dodge wants a sharp pivot.
+    const aim = player.aiming || player.shootT > 0 || player.throwAim || player.tossAim;
+    const r = aim ? MOVE.faceAim
+            : (player.rollT > 0 || player.lungeT > 0) ? MOVE.faceRoll
+            : lerp(MOVE.face0, MOVE.face1, clamp(Math.hypot(player.vx, player.vz) / MOVE.max, 0, 1));
+    player.faceH += d * Math.min(1, dt * r); }
   // The climb, in the body. alignTo already sits him on the ground's plane, but a figure
   // walking up a hill at the same upright angle he walks a lawn is the whole reason a slope
   // read as flat ground tilted -- the effort was in the numbers and nowhere in the picture.
