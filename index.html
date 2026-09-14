@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f02';
+const BUILD = 'f03';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -13192,7 +13192,17 @@ function buildBase(x, z, yaw) {
   scene.add(g);
 
   const obs = [];
-  const solid = (lx, lz, r, top) => { const w = W(lx, lz); obs.push(obAdd(w.x, w.z, r * K, null, top === undefined ? Infinity : floorY + top * K, 'base')); };
+  // A COLLIDER IS A CIRCLE ON THE FLAT CHART AND NOTHING ELSE. The obstacle field is a 2D
+  // spatial hash; what keeps a thing from stopping you at a different altitude is `bot`, and
+  // the first version of this passed none -- so the station's forty-four wall circles, its
+  // corridor sides and its garden ring were all standing at GROUND LEVEL on the berth, four
+  // hundred and thirty units under the building they belong to, invisible, in a ring right
+  // round the ship. That is the wall he walked into looking for it.
+  // `air` as well, which in this file means "only the player reads this": obRad returns 0 for
+  // the creatures and the bolt, so nothing on the island has to path round a building that
+  // is not there. It is what the decks already use, for the same reason.
+  const solid = (lx, lz, r, top) => { const w = W(lx, lz);
+    obs.push(obAdd(w.x, w.z, r * K, null, top === undefined ? Infinity : floorY + top * K, 'base', floorY - 3, true)); };
   const deck = (lx, lz, r, y) => { const w = W(lx, lz); obs.push(obAdd(w.x, w.z, r * K, null, floorY + y * K, 'base:deck', floorY + y * K - 2.4, true)); };
 
   // ---- the floors you stand on ----
@@ -13319,7 +13329,7 @@ function buildBase(x, z, yaw) {
   const padW = W(padL.x, padL.z);
   const st = { alive: true, pos: new THREE.Vector3(x, floorY, z), x, z, g, obs, yaw, k: K, floorY, lights,
     padX: padW.x, padZ: padW.z, padR: ORBIT.padR * K, bg,
-    lampG, lampOn: false, asked: false, shown: false,
+    lampG, lampOn: false, asked: false, shown: false, told: false,
     // How far he is from it, in three dimensions, because the whole point of this thing is
     // that the distance that matters is mostly straight up.
     away() {
@@ -13344,6 +13354,14 @@ function buildBase(x, z, yaw) {
       const show = this.shown ? d < ORBIT.show * 1.15 : d < ORBIT.show;
       // The beacon gives way to the real thing, and takes over again on the way home.
       if (show !== this.shown) { this.shown = show; this.g.visible = show; this.bg.visible = !show; }
+      // ONCE, THE FIRST TIME HE IS STANDING UNDER IT. The map mark gets him to the berth and
+      // then stops being any help at all -- it is a flat map and the last four hundred units
+      // of the trip are the one direction it cannot draw.
+      if (!this.told && world.player && !world.player.aboard && world.player.pos.y < 60
+          && Math.hypot(world.player.pos.x - this.x, world.player.pos.z - this.z) < 45) {
+        this.told = true;
+        logMsg('The station is straight overhead. Take the ship up -- hold the stick up and the drive will do the rest.');
+      }
       const on = this.lampOn ? d < BASE.lightR * 1.4 : d < BASE.lightR;
       if (on === this.lampOn) return;
       this.lampOn = on;
@@ -23096,6 +23114,7 @@ function buildWaypoint() {
   gm.setAttribute('color', new THREE.BufferAttribute(new Float32Array(WAY.N * 3), 3));
   // Where each mote actually is, as opposed to where the straight line says it should be.
   WAY.nx = new Float32Array(WAY.N); WAY.nz = new Float32Array(WAY.N); WAY.ok = new Uint8Array(WAY.N);
+  WAY.slotJ = new Int32Array(WAY.N).fill(-1);  // which mote of the rope each slot is holding
   WAY.trail = new THREE.Points(gm, new THREE.PointsMaterial({ map: glowTex, color: 0xffffff,
     vertexColors: true,
     size: 2.2, sizeAttenuation: true, transparent: true, opacity: .95, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -23107,6 +23126,7 @@ function setWaypoint(w) {
   WAY.at = MAP.way;
   WAY.g.visible = !!MAP.way; WAY.trail.visible = !!MAP.way;
   if (WAY.ok) WAY.ok.fill(0);            // a fresh mark lays its rope straight, then goes slack
+  if (WAY.slotJ) WAY.slotJ.fill(-1);
   if (MAP.way) {
     WAY.g.position.set(MAP.way.x, groundY(MAP.way.x, MAP.way.z), MAP.way.z);
     world.effects.push(new Burst(MAP.way.x, WAY.g.position.y + 1.4, MAP.way.z, '#9fe6ff', 10, 1.2));
@@ -23128,7 +23148,18 @@ function updateWaypoint(dt) {
   const dx = WAY.at.x - p.x, dz = WAY.at.z - p.z, d = Math.hypot(dx, dz);
   const near = Math.min(1, d / 8);
   const span = Math.max(0, d - 4.5);
-  const n = clamp(Math.round(span / WAY.gap), 2, WAY.N);
+  // WHICH END THE WINDOW IS ANCHORED TO, and this is what he watched fail. The motes sit at
+  // fixed distances back from the MARK, which is right and is what makes him walk through
+  // them rather than drag them -- but the count is capped at N, and the cap was being spent
+  // from the mark end. Beyond N * gap (a bit over three hundred units) the rope simply
+  // stopped, three hundred units short of him: he set a mark across the island and then had
+  // to walk a third of the way there before the trail even began.
+  // The far end is the one thing that does not need dots on it -- there is a thirty-four unit
+  // beam standing on it that you can see over a ridge. So the window keeps the N motes
+  // NEAREST HIM and drops the ones out past the far end.
+  const total = Math.max(2, Math.floor(span / WAY.gap));
+  const n = Math.min(total, WAY.N);
+  const i0 = total - n;
   WAY.trail.geometry.setDrawRange(0, n);       // the rest of the buffer is simply not drawn
   const ux = dx / (d || 1), uz = dz / (d || 1);
   const rgx = -uz, rgz = ux;                   // the line's own right, for the side-to-side
@@ -23143,22 +23174,28 @@ function updateWaypoint(dt) {
   // simply stop being drawn as the count comes down.
   const cA = WAY.trail.geometry.attributes.color;
   for (let i = 0; i < n; i++) {
-    const ph = i * 2.3999632;                  // the golden angle: no two motes in step
-    const k = d - 2.0 - i * WAY.gap;
-    if (k < 1.2) { a.array[i * 3 + 1] = -9999; WAY.ok[i] = 0; continue; }   // parked under the world
+    const j = i0 + i;                          // which mote of the whole rope this slot is
+    const ph = j * 2.3999632;                  // the golden angle: no two motes in step
+    const k = d - 2.0 - j * WAY.gap;
+    // The slack is per-MOTE, not per-slot, and the window slides as he walks -- so the slot a
+    // mote lives in has to follow the mote. j mod N is unique inside any N-long window, and
+    // a slot handed a new j forgets where the old one was instead of dragging it across.
+    const sl = ((j % WAY.N) + WAY.N) % WAY.N;
+    if (WAY.slotJ[sl] !== j) { WAY.slotJ[sl] = j; WAY.ok[sl] = 0; }
+    if (k < 1.2) { a.array[i * 3 + 1] = -9999; WAY.ok[sl] = 0; continue; }   // parked under the world
     // Where the straight line wants it, and then the slack. A mote coming back into the count
     // snaps to its place rather than flying in from wherever it was parked.
     const tx = p.x + ux * k, tz = p.z + uz * k;
-    if (!WAY.ok[i]) { WAY.nx[i] = tx; WAY.nz[i] = tz; WAY.ok[i] = 1; }
+    if (!WAY.ok[sl]) { WAY.nx[sl] = tx; WAY.nz[sl] = tz; WAY.ok[sl] = 1; }
     else {
       const lag = 1 - Math.exp(-dt / Math.min(WAY.easeCap, WAY.ease0 + k * WAY.easeK));
-      WAY.nx[i] += (tx - WAY.nx[i]) * lag; WAY.nz[i] += (tz - WAY.nz[i]) * lag;
+      WAY.nx[sl] += (tx - WAY.nx[sl]) * lag; WAY.nz[sl] += (tz - WAY.nz[sl]) * lag;
     }
     const sway = Math.sin(t * WAY.swayR + ph) * WAY.sway
                + Math.sin(t * WAY.swayR * 1.73 + ph * 2.1) * WAY.sway * .42;
     const bob = Math.sin(t * WAY.bobR + ph * 1.31) * WAY.bob
               + Math.sin(t * WAY.bobR * 2.29 + ph * .7) * WAY.bob * .38;
-    const x = WAY.nx[i] + rgx * sway, z = WAY.nz[i] + rgz * sway;
+    const x = WAY.nx[sl] + rgx * sway, z = WAY.nz[sl] + rgz * sway;
     planetPos(x, groundY(x, z) + WAY.lift + bob, z, _wgV);
     a.array[i * 3] = _wgV.x; a.array[i * 3 + 1] = _wgV.y; a.array[i * 3 + 2] = _wgV.z;
     // The pulse, off DISTANCE rather than off index, so it runs at a fixed speed over the
@@ -23302,12 +23339,16 @@ function mapMarks() {
   // zoom in to find is no use for finding somebody.
   for (const c of world.creatures) if (c.alive && c instanceof Poacher && !c.carried)
     out.push({ x: c.pos.x, z: c.pos.z, k: 'poacher' });
-  if (world.base) out.push({ x: world.base.x, z: world.base.z, k: 'ship', label: 'the station, overhead' });
+  if (world.base) out.push({ x: world.base.x, z: world.base.z, k: 'orbit', label: 'the station \u2191 overhead' });
   if (MAP.way) out.push({ x: MAP.way.x, z: MAP.way.z, k: 'way', label: 'waypoint' });
   return out;
 }
 const MAP_KEY = {
   you: ['#ffe9b0', 'you'], way: ['#7fd8ff', 'waypoint'], ship: ['#ff8a3c', 'ship'], tree: ['#8fe6a8', 'Elderwillow'],
+  // Its own mark, because it sits on exactly the same spot as the ship -- one orange dot
+  // for both is a map saying there is one thing at the berth when there are two, one of
+  // them four hundred units up.
+  orbit: ['#bdf2ff', 'the station'],
   camp: ['#ffb45a', 'camp'], cave: ['#9fd6ff', 'cave'], isle: ['#c9a6ff', 'floating isle'],
   beacon: ['#fff0b8', 'lit beacon'], cairn: ['#cfc6b4', 'cairn'], lander: ['#c48cff', 'the lander'],
   poacher: ['#ff7a6a', 'poacher'],
