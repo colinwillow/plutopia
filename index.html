@@ -1722,7 +1722,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f19';
+const BUILD = 'f20';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -20202,10 +20202,17 @@ const PACK = {
   // on, and the puffs are discrete things thrown off it. A jet needs both: the flame says it
   // is burning, the puffs say it is burning in bursts.
   // Unlit and additive, like everything else in this game that is meant to be hot; the bloom
-  // at 0.76 does the glow. `dir` is which way is OUT of the nozzle, in degrees about the
-  // joint's own axes -- guessed at 180 (straight down its -Y) and tunable from ?fit, because
-  // the one thing no amount of reading settles is which way an exporter called down.
-  flame: { r: .085, len: .40, dir: [180, 0, 0], col: '#ff9a3c', hot: '#fff0c8' },
+  // at 0.76 does the glow.
+  // `dir` IS ZERO, AND IT IS DERIVED RATHER THAN GUESSED AT. I said last build that which way
+  // an exporter calls down is the one thing reading cannot settle. That was wrong: the
+  // rotations are in the file and composing them answers it exactly. jet_R's chain is
+  // Armature(+90 x) * Spine1(-98.5 x) * root(180 about y) * jet(identity), and pushing the
+  // joint's local -Y through it lands on (0.000, -1.000, 0.000) -- dead down the pack, to
+  // three decimals.
+  // So the cone, which is already built running down its own group's -Y, wanted nothing doing
+  // to it. Rotating the group 180 on top of that was a second flip, which is why they came out
+  // of the top of him like candles. Zero.
+  flame: { r: .085, len: .40, dir: [0, 0, 0], col: '#ff9a3c', hot: '#fff0c8' },
 };
 function attachPack(r) {
   if (!PACK.on || !r || !r.root) return;
@@ -20249,8 +20256,11 @@ function attachPack(r) {
             transparent: true, opacity: k, blending: THREE.AdditiveBlending,
             depthWrite: false, side: THREE.DoubleSide, toneMapped: false, fog: false }));
         c.frustumCulled = false;
-        // The cone is built point-up about its middle; shifted so its MOUTH is on the joint
-        // and it runs away down its own -Y, which is what `dir` then aims.
+        // ConeGeometry is built APEX UP, base down, about its own middle. Turned over so the
+        // apex is down, then shifted so the wide MOUTH sits exactly on the joint and the point
+        // runs away below it. It therefore already points down the group's -Y before `dir`
+        // touches it -- which is the thing to check first if these ever come out inverted
+        // again, because `dir` is a correction and not the aim.
         c.position.y = -.5; c.rotation.x = Math.PI;
         f.add(c); return c;
       };
