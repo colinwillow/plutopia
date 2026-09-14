@@ -1630,7 +1630,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'e97';
+const BUILD = 'e98';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -13014,6 +13014,161 @@ class Lander {
   }
 }
 
+// ---------- THE ALIEN BASE ----------
+// The one thing on this island that was modelled somewhere else and arrives whole: an atrium
+// under a glass dome, a mezzanine ring, three corridors and a water garden. 292 nodes, 42
+// meshes, no textures at all -- flat colours and emission, which is why it is 0.8 MB.
+//
+// EVERYTHING BELOW COMES OUT OF ITS OWN README (models/environment/base/ALIEN_BASE.md), which
+// gives the layout in three.js metres. Two things had to be decided here rather than there.
+//
+// SCALE. The doc's arches are 2.4 m at the crown and this game's wanderer is 2.8 units tall --
+// he could not walk through his own front door. Everything is multiplied by `k`, which is the
+// one number to move if the rooms feel wrong: at 1.75 the arch crown is 4.2, the dome springs
+// at 11.5 and the atrium is forty across, which is a room a three-and-a-half-unit bruin could
+// stand up in.
+//
+// THE FLOOR. The building is level and the island is not. Rather than flattening terrain under
+// it -- which would leave a visible plate -- the floors are registered as `air` decks in the
+// obstacle field, which is the same machinery the great tree's branches use: the player stands
+// on the highest deck under his feet, and the ground can do whatever it likes underneath.
+const BASE = {
+  url: 'models/environment/base/alien_base.glb',
+  k: 1.75,               // the doc's metres into a game whose people are three units tall
+  atrium: 11.5,          // and every figure below is in the doc's own metres, before k
+  plat: 4.4, platY: .75,
+  mezz: [8.9, 11.5], mezzY: 4.0,
+  arch: [30, 150, 270],  // degrees, where the corridors leave the atrium
+  archHalf: .19,         // half the doorway, in radians: 21 degrees, wide enough to walk
+  corr: 12.5, corrHalf: 1.7,
+  garden: { x: -27.7, z: -16, r: 8.5 },
+  wallN: 44,             // collider circles round the perimeter
+  lift: .12,             // the floor sits this far over the ground it was placed on
+  emit: 1.9,             // the GLB's emission assumes a bloom pass; this one is gentler
+};
+function buildBase(x, z, yaw) {
+  const K = BASE.k, sy = Math.sin(yaw), cy = Math.cos(yaw);
+  const floorY = groundY(x, z) + BASE.lift;
+  // Site-local (already in metres, before k) to chart. The group is turned about the local up
+  // by `yaw`, so this is that same rotation done by hand for the colliders, which live in the
+  // flat chart rather than under the group.
+  const W = (lx, lz) => ({ x: x + (lx * cy + lz * sy) * K, z: z + (-lx * sy + lz * cy) * K });
+  clearGrass(x, z, BASE.atrium * K + 6);
+  clearGrass(x + (BASE.garden.x * cy + BASE.garden.z * sy) * K,
+             z + (-BASE.garden.x * sy + BASE.garden.z * cy) * K, BASE.garden.r * K + 5);
+
+  const g = new THREE.Group();
+  g.position.set(x, floorY, z);
+  // Level, not leaned. Everything else on the island tips with the ground under it; a building
+  // forty units across cannot, or its far side is four units into the hill.
+  g.quaternion.setFromAxisAngle(_plY, yaw);
+  g.userData.what = 'alien base';
+  scene.add(g);
+
+  const obs = [];
+  const solid = (lx, lz, r, top) => { const w = W(lx, lz); obs.push(obAdd(w.x, w.z, r * K, null, top === undefined ? Infinity : floorY + top * K, 'base')); };
+  const deck = (lx, lz, r, y) => { const w = W(lx, lz); obs.push(obAdd(w.x, w.z, r * K, null, floorY + y * K, 'base:deck', floorY + y * K - 2.4, true)); };
+
+  // ---- the floors you stand on ----
+  // One disc for the atrium, a chain down each corridor, one for the garden. `air` decks are
+  // invisible to the creatures and the bolt and read only by the thing that can jump.
+  deck(0, 0, BASE.atrium, 0);
+  deck(0, 0, BASE.plat, BASE.platY);                       // the raised platform: a step up
+  for (const deg of BASE.arch) {
+    const a = deg * Math.PI / 180, s = Math.sin(a), c = Math.cos(a);
+    for (let t = 0; t <= 1.001; t += .2) {
+      const r = BASE.atrium - 1 + t * BASE.corr;
+      deck(s * r, c * r, BASE.corrHalf + .4, 0);
+    }
+  }
+  deck(BASE.garden.x, BASE.garden.z, BASE.garden.r, 0);
+
+  // ---- the walls that stop you ----
+  // A ring of circles with a gap at each arch, which is exactly how the dome hut's wall is
+  // built -- and, as that one taught at some cost, every circle has to clear OB_PLAYER.minOb
+  // or resolvePlayer throws it away before it is ever compared against him.
+  const step = Math.PI * 2 / BASE.wallN, chord = 2 * BASE.atrium * Math.sin(step * .5);
+  const wallR = Math.max(chord * .62, .95 / K);
+  for (let i = 0; i < BASE.wallN; i++) {
+    const a = i * step;
+    let doorway = false;
+    for (const deg of BASE.arch) {
+      let d = a - deg * Math.PI / 180; d = Math.atan2(Math.sin(d), Math.cos(d));
+      if (Math.abs(d) < BASE.archHalf) doorway = true;
+    }
+    if (doorway) continue;
+    solid(Math.sin(a) * BASE.atrium, Math.cos(a) * BASE.atrium, wallR);
+  }
+  // Corridor sides, so you walk down them rather than out of them.
+  for (const deg of BASE.arch) {
+    const a = deg * Math.PI / 180, s = Math.sin(a), c = Math.cos(a);
+    for (let t = 0; t <= 1.001; t += .14) {
+      const r = BASE.atrium + t * BASE.corr;
+      for (const sgn of [1, -1]) solid(s * r + c * sgn * BASE.corrHalf, c * r - s * sgn * BASE.corrHalf, .78);
+    }
+  }
+  // The garden's own wall, with a gap where the corridor comes in.
+  {
+    const gx = BASE.garden.x, gz = BASE.garden.z, R = BASE.garden.r;
+    const inA = Math.atan2(-gx, -gz);                      // back toward the atrium
+    for (let i = 0; i < 30; i++) {
+      const a = i / 30 * Math.PI * 2;
+      let d = a - inA; d = Math.atan2(Math.sin(d), Math.cos(d));
+      if (Math.abs(d) < .30) continue;
+      solid(gx + Math.sin(a) * R, gz + Math.cos(a) * R, 1.05);
+    }
+  }
+  // The hologram column in the middle of the platform: the one thing indoors you walk into.
+  solid(0, 0, 1.1);
+
+  // ---- the light it was asked for ----
+  // Its README wants a hemisphere, a key and a handful of points. The island already has the
+  // first two and they reach inside through the glass, so this is only the points -- the
+  // oculus, the hologram, the garden -- plus a warm ring standing in for bounce off the floor.
+  const lamp = (lx, ly, lz, col, inten, dist) => {
+    const l = new THREE.PointLight(col, inten, dist * K, 2);
+    l.position.set(lx * K, ly * K, lz * K); g.add(l); return l;
+  };
+  const lights = [];
+  lights.push(lamp(0, 9, 0, 0x9fe6ff, 26, 26));            // the oculus
+  lights.push(lamp(0, 4.3, 0, 0x7fd8ff, 20, 16));          // the hologram
+  lights.push(lamp(BASE.garden.x, 7, BASE.garden.z, 0x8ff0d8, 22, 22));
+  for (let i = 0; i < 4; i++) {
+    const a = i / 4 * Math.PI * 2 + .4;
+    lights.push(lamp(Math.sin(a) * 7, 3.3, Math.cos(a) * 7, 0xffd9a0, 7, 15));
+  }
+
+  const st = { alive: true, pos: new THREE.Vector3(x, floorY, z), g, obs, yaw, k: K, floorY, lights,
+    update() {}, dispose() { for (const o of this.obs) obRemove(o); scene.remove(this.g); } };
+
+  loadModel(BASE.url, e => {
+    const inst = cloneModel(e.root);
+    inst.scale.setScalar(K);
+    inst.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = false;                                // indoors, off one key light: not worth it
+      o.receiveShadow = true;
+      for (const m of [].concat(o.material)) {
+        if (!m || m.userData.baseDone) continue;
+        m.userData.baseDone = 1;
+        // NO BLOOM PASS HERE THAT ITS AUTHOR COULD COUNT ON. The README says the emissive
+        // strengths are modest on the assumption a bloom does the glowing, and this game's
+        // bloom has a 0.76 threshold aimed at bioluminescence outdoors. Rather than retune a
+        // whole post chain round one building, the emission is raised at the material.
+        if (m.emissive && (m.emissive.r + m.emissive.g + m.emissive.b) > .01)
+          m.emissiveIntensity = (m.emissiveIntensity || 1) * BASE.emit;
+        // TRANSMISSION IS THE EXPENSIVE ONE. Its own README says so: the glass, the fluid and
+        // the pond force extra render passes, and on a phone that is the whole frame budget
+        // for one wing of one building. Same look, an eighth of the cost.
+        if (MOBILE && m.transmission > .01) { m.transmission = 0; m.transparent = true; m.opacity = .26; m.depthWrite = false; }
+        else if (m.transmission > .01) { m.depthWrite = false; }
+      }
+    });
+    g.add(inst); st.model = inst;
+  }, () => console.warn('[base] the alien base did not load; its colliders are still there'));
+  return { x, z };
+}
+
 // ---------- the dome hut, built rather than loaded ----------
 // The same building as models/dome_hut.glb, made out of primitives, to answer a straight
 // question: is a modelling package worth the trip for a thing this shape? Two answers, and
@@ -13418,6 +13573,20 @@ function buildSites() {
       out.push(buildPoacherCamp(ps.x, ps.z, Math.atan2(PLAT.x - ps.x, PLAT.z - ps.z)));
       console.info('[site] the poachers are camped at ' + ps.x.toFixed(0) + ', ' + ps.z.toFixed(0)); }
     else console.warn('[site] nowhere on the terrace for the poachers');
+  }
+  // THE BASE. It wants more flat ground than anything else on the island -- forty units of
+  // atrium and a garden wing thirty out from it -- so it is asked for first, with the widest
+  // clearance, and it is the one site allowed to fall back to bare flat land if no biome will
+  // have it. Somewhere to come home to is worth more than somewhere picturesque.
+  {
+    const bs = siteSpot('base', ['pasture', 'scrub', 'coast'], 1.8, 13, .14, [26, 21, 17, 13], out)
+      || randomLand(1.6, 14, .2, 400, 12) || randomLand(1.4, 16, .3);
+    if (bs) {
+      const yaw = rnd(Math.PI * 2);
+      out.push(buildBase(bs.x, bs.z, yaw));
+      world.base = { x: bs.x, z: bs.z, yaw };
+      console.info('[site] the base stands at ' + bs.x.toFixed(0) + ', ' + bs.z.toFixed(0));
+    }
   }
   // Near the berth on purpose: it is a thing to go and look at rather than a thing to find.
   {
@@ -17079,7 +17248,17 @@ const RIG = {
   g.traverse(m => { if (m.isMesh) m.castShadow = true; });
   scene.add(g);
   Object.assign(player, { g, ph, legs, lamp, gl, light, spot, bulb, drone: null, fins: null, droneGlow: null, rig: null, rigH: null, mixer: null, acts: null, blink: null, speed: 0 });
-  const sp = world.spawn || { x: 0, z: 0 };
+  // ?base starts him just inside the 270-degree arch, which is where its README says to put
+  // him: far enough in to be under the dome, facing the middle. A whole island is a long walk
+  // when the thing you want to look at is one building.
+  let sp = world.spawn || { x: 0, z: 0 };
+  try {
+    if (/[?&]base\b/.test(location.search) && world.base) {
+      const b = world.base, K = BASE.k, s2 = Math.sin(b.yaw), c2 = Math.cos(b.yaw);
+      const lx = 0, lz = 10.4;
+      sp = { x: b.x + (lx * c2 + lz * s2) * K, z: b.z + (-lx * s2 + lz * c2) * K };
+    }
+  } catch (_) {}
   player.pos.set(sp.x, Math.max(height(sp.x, sp.z), SEA), sp.z);
   g.position.copy(player.pos);
   cam.tgt.set(sp.x, player.pos.y + 3.4, sp.z);
@@ -22877,6 +23056,7 @@ function mapMarks() {
   // zoom in to find is no use for finding somebody.
   for (const c of world.creatures) if (c.alive && c instanceof Poacher && !c.carried)
     out.push({ x: c.pos.x, z: c.pos.z, k: 'poacher' });
+  if (world.base) out.push({ x: world.base.x, z: world.base.z, k: 'ship', label: 'the base' });
   if (MAP.way) out.push({ x: MAP.way.x, z: MAP.way.z, k: 'way', label: 'waypoint' });
   return out;
 }
