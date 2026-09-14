@@ -299,6 +299,22 @@
     box-shadow:0 8px 26px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.04);
     -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);
     padding:11px 13px 13px;scrollbar-width:thin}
+  /* ?fit -- the mount tuner. Deliberately plain and deliberately big: it is a tool for a
+     thumb on a phone, not part of the game's face, and it is only on screen when asked for. */
+  #fitpad{position:fixed;left:10px;bottom:calc(200px + var(--uib,0px));z-index:40;width:206px;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#f6e8cc;
+    background:rgba(8,12,28,.86);border:1.5px solid rgba(157,247,255,.34);border-radius:10px;padding:7px 8px;
+    -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}
+  #fitpad .fh{display:flex;gap:5px;margin-bottom:6px}
+  #fitpad button{font:inherit;color:#f6e8cc;background:rgba(20,28,56,.9);border:1px solid rgba(157,247,255,.30);
+    border-radius:6px;padding:5px 0;min-width:34px;line-height:1}
+  #fitpad .fh button{flex:1;padding:5px 4px}
+  #fitpad button.on{background:rgba(157,247,255,.22);border-color:rgba(157,247,255,.8)}
+  #fitpad .fr{display:flex;align-items:center;gap:5px;margin-bottom:4px}
+  #fitpad .fr b{width:38px;font-weight:400;opacity:.66}
+  #fitpad .fr i{flex:1;text-align:center;font-style:normal;opacity:.95}
+  #fitpad .fo{margin-top:6px;padding-top:5px;border-top:1px solid rgba(157,247,255,.18);
+    opacity:.7;line-height:1.45;word-break:break-word;-webkit-user-select:text;user-select:text}
   #journal::-webkit-scrollbar{width:4px}
   #journal::-webkit-scrollbar-thumb{background:rgba(157,247,255,.26);border-radius:3px}
   #journal h3{margin:0 0 8px;font-family:var(--disp);font-weight:700;font-size:11px;
@@ -1709,7 +1725,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f14';
+const BUILD = 'f15';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -7497,8 +7513,16 @@ const PLANT_MODELS = {
   // the ground. 02-04 are narrow-based, so they also claim a smaller collider: `foot`
   // scales the footprint the class registered before it knew which trunk it would get.
   LanternTree: {
-    url: ['models/alien_tree_01.glb', 'models/alien_tree_02.glb', 'models/alien_tree_03.glb', 'models/alien_tree_04.glb'],
-    foot: [1, .56, .5, .54],
+    // THE FIFTH IS A GIANT. He wants the island to go vertical and this is the first move
+    // toward it: one trunk in the set that is two and a half times the others and comes up
+    // about one tree in fourteen, so a stand of ordinary trees has something standing over it
+    // rather than every tree being the same tree. Its footprint is wider to match -- a trunk
+    // you cannot walk through is the first half of a thing you climb.
+    url: ['models/alien_tree_01.glb', 'models/alien_tree_02.glb', 'models/alien_tree_03.glb',
+          'models/alien_tree_04.glb', 'models/trees/alien_tree_large_01.glb'],
+    foot: [1, .56, .5, .54, 1.35],
+    odds: [1, 1, 1, 1, .30],
+    tall: [1, 1, 1, 1, 2.6],
     height: p => p.h * 1.34,
     keep: ['fruitG'],
     keepY: p => p.h * 1.02,
@@ -7746,7 +7770,17 @@ function vibeStep(list, t, pos) {
 function attachPlantModel(plant, cfg) {
   // `url` may be a list, in which case each plant draws one and keeps the index: `foot`
   // and anything else per-variant is looked up by it.
-  const urls = [].concat(cfg.url), vi = urls.length > 1 ? Math.floor(Math.random() * urls.length) : 0;
+  // `odds` weights the draw. Without it a fifth trunk means a fifth of every tree on the
+  // island is that trunk, which is not what a RARE one means -- a giant is a landmark, and a
+  // landmark you meet every forty metres is scenery.
+  const urls = [].concat(cfg.url);
+  let vi = 0;
+  if (urls.length > 1) {
+    const w = cfg.odds || urls.map(() => 1);
+    let tot = 0; for (let i = 0; i < urls.length; i++) tot += (w[i] === undefined ? 1 : w[i]);
+    let r = Math.random() * tot;
+    for (vi = 0; vi < urls.length - 1; vi++) { r -= (w[vi] === undefined ? 1 : w[vi]); if (r <= 0) break; }
+  }
   plant.variant = vi;
   loadModel(urls[vi], e => {
     if (!plant.alive) return;
@@ -7765,7 +7799,10 @@ function attachPlantModel(plant, cfg) {
       o.position.y = num(cfg.keepY, o.position.y);
     }
     const inst = cloneModel(e.root);
-    const H = num(cfg.height, 1), h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? H / h : 1;
+    // `tall` is per-variant, applied over the class's own height, so one trunk in the list can
+    // be a different order of thing rather than the same tree with another texture.
+    const tk = (cfg.tall && cfg.tall[vi] !== undefined) ? cfg.tall[vi] : 1;
+    const H = num(cfg.height, 1) * tk, h = e.box.max.y - e.box.min.y, s = h > 1e-4 ? H / h : 1;
     inst.scale.setScalar(s); inst.position.y = -e.box.min.y * s;
     inst.rotation.y = rnd(Math.PI * 2);
     inst.traverse(o => { if (o.isMesh) {
@@ -18239,7 +18276,7 @@ function setPuff(url) {
   if (_puff) { scene.remove(_puff.pts); _puff.gm.dispose(); _puff.mat.dispose(); _puff.tex.dispose(); _puff = null; }
   return PUFF.url || 'drawn placeholder';
 }
-window.isle = { puff: setPuff, PUFF, JET,
+window.isle = { puff: setPuff, PUFF, JET, PACK, pack: o => { if (o) Object.assign(PACK, o); fitPack(); return PACK; },
   // isle.pop('boom') / 'launch' / 'hit' / 'jet': one of each, at head height, to look at.
   pop: (k) => puffSpawn(player.pos.x, player.pos.y + 1.4, player.pos.z, JET.blast, 0, 1.2, 0, k || 'jet'),
   player, world, export: exportSite, exportList, sky: skySolo, skyU: skyUni, env: ENV, move: setMove, wx: WX, waveY, height, groundY, MOVE, MODEL, RIG, SWIM, OB, OB_PLAYER, obNear, showObs: showObstacles, toon: TOON, tint: TINT, look: LOOK, setLook, ground: GROUND_UNI, tree: () => world.motherTree, skins: SKINS, skin: setSkin, mood: MOOD, flip: setFlipPack, vit: VIT, bub: CBUB, tame: TAME,
@@ -18317,6 +18354,7 @@ function loadRig(g) {
       if (h < FAIRY.rest) { fairy.off.x *= FAIRY.rest / h; fairy.off.z *= FAIRY.rest / h; } }
     logMsg('The wanderer takes shape.');
     attachWeapon(r);
+    attachPack(r);
   });
 }
 
@@ -20105,6 +20143,155 @@ function weaponPop(showing) {
   if (!weap.bone) return;
   jointChart(weap.bone, _wpV);
   world.effects.push(new WeaponPop(_wpV.x, _wpV.y, _wpV.z, !!showing));
+}
+// ---------- the jetpack, on his back ----------
+// He asked for it rigged to a bone "which would probably be helpful for exact placement" --
+// and the mount is the easy half. A bone is a transform: find the one that is his upper back,
+// add the model as a child, and it goes everywhere the spine goes for free, through every
+// clip, with no per-frame work at all.
+//
+// THE HARD HALF IS THE NUMBERS, and that is what has made the axe a standing complaint. There
+// is no way to know from here how far off his spine the pack sits or which way it faces -- it
+// depends on where the modeller put the origin, which way the exporter called forward, and how
+// the rig is scaled. Guessing costs him a look each time. So the offsets live in one table and
+// there is a tuner on the URL that nudges them with a thumb: see ?fit.
+const PACK = {
+  url: 'models/alien_jetpack.glb',
+  on: true,              // stops being true when there is a progression that grants it
+  // Everything below is in the RIG's own units, as fractions of his height, so a re-export at
+  // another scale does not move it.
+  size: .30,             // the pack's height, against his
+  at: [0, .02, -.10],    // from the spine joint: across, along, and out from his back
+  rot: [0, 0, 0],        // pitch, yaw, roll, in degrees
+  // Which joint. The highest spine the rig has, so it rides his shoulders rather than his
+  // waist -- a pack on the hips swings with every stride and reads as luggage.
+  bone: [/spine.?2$/i, /spine.?1$/i, /chest/i, /upperchest/i, /spine/i],
+};
+function attachPack(r) {
+  if (!PACK.on || !r || !r.root) return;
+  let bone = null, best = -1;
+  r.root.traverse(o => {
+    if (!o.isBone) return;
+    const nm = o.name.toLowerCase();
+    for (let i = 0; i < PACK.bone.length; i++) {
+      if (!PACK.bone[i].test(nm)) continue;
+      // earlier patterns win: the list is in order of preference, not of discovery
+      if (best < 0 || i < best) { best = i; bone = o; }
+      break;
+    }
+  });
+  if (!bone) { console.warn('[pack] no spine joint on the rig; no jetpack'); return; }
+  loadModel(PACK.url, e => {
+    const inst = cloneModel(e.root);
+    const g = new THREE.Group(); g.add(inst);
+    // The model is one unit tall in its own file (measured: 0.943 x 1.000 x 0.536, sitting on
+    // y = 0), so the fit is one division -- and it is done against the BONE's scale, not the
+    // world's, because a joint in these exports carries a hundredth-scale of its own and a
+    // child of it inherits that.
+    const h = Math.max(1e-4, e.box.max.y - e.box.min.y);
+    inst.scale.setScalar(1 / h); inst.position.y = -e.box.min.y / h;   // one unit tall, on its origin
+    inst.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+    bone.add(g);
+    weap.pack = g; weap.packBone = bone; weap.packN = 10;
+    fitPack();
+  }, () => console.warn('[pack] the jetpack did not load'));
+}
+// Read off PACK every time rather than baked in at attach, so the tuner moves it live.
+const _pkE = new THREE.Euler(), _pkP = new THREE.Vector3(), _pkQ = new THREE.Quaternion(), _pkS = new THREE.Vector3();
+function fitPack() {
+  const g = weap.pack, bone = weap.packBone; if (!g || !bone) return PACK;
+  // MEASURED, NOT ASSUMED. A child of a bone is in the BONE's units, and in these exports that
+  // is not the world's by a long way -- the armature carries a hundredth-scale and the rig is
+  // then normalised to RIG.height on top of it, so "0.3" as a local scale could be anything on
+  // screen. Reading the bone's own world scale and dividing it out makes PACK.size and PACK.at
+  // mean what they say: fractions of HIS height, in world units, whatever the file did.
+  bone.updateWorldMatrix(true, false);
+  bone.matrixWorld.decompose(_pkP, _pkQ, _pkS);
+  const bs = (Math.abs(_pkS.x) + Math.abs(_pkS.y) + Math.abs(_pkS.z)) / 3;
+  const k = RIG.height / (bs > 1e-9 ? bs : 1);
+  g.scale.setScalar(PACK.size * k);
+  g.position.set(PACK.at[0] * k, PACK.at[1] * k, PACK.at[2] * k);
+  g.quaternion.setFromEuler(_pkE.set(PACK.rot[0] * Math.PI / 180, PACK.rot[1] * Math.PI / 180,
+                                     PACK.rot[2] * Math.PI / 180, 'YXZ'));
+  return PACK;
+}
+// ---------- ?fit : placing a mounted thing with a thumb ----------
+// THE REASON THIS EXISTS. "The jetpack isn't rigged to a bone, which would be helpful for
+// exact placement" and "the axe isn't perfect" are the same problem, and it is not the
+// mounting -- a bone is a transform and parenting to it takes one line. It is that nobody
+// here can SEE the result. Where a pack sits against a back depends on where the modeller put
+// the origin, which way the exporter called forward and how the armature was scaled, and none
+// of those are readable from the code. So every guess costs him a look, and the axe has been
+// "not perfect" for weeks because nudging it is a round trip per nudge.
+//
+// He has the game on a phone and no console. So: the offsets are on screen, with a thumb on
+// them, and the numbers print into the journal to be read back. One session of his instead of
+// twenty of mine.
+const FIT = {
+  on: false, which: 'pack',
+  // step per tap: position in fractions of his height, rotation in degrees, size likewise
+  dp: .01, dr: 5, ds: .02,
+  rows: [['x', 0], ['y', 1], ['z', 2], ['pitch', 3], ['yaw', 4], ['roll', 5], ['size', 6]],
+};
+// One shape for two different tables. The axe keeps its own names because fitAxe reads them;
+// this is only the mapping from "the sixth row" to "AXEM.roll", and back.
+const FIT_T = {
+  pack: {
+    get: i => i < 3 ? PACK.at[i] : i < 6 ? PACK.rot[i - 3] : PACK.size,
+    set: (i, v) => { if (i < 3) PACK.at[i] = v; else if (i < 6) PACK.rot[i - 3] = v; else PACK.size = Math.max(.02, v); fitPack(); },
+    show: () => 'at ' + PACK.at.map(n => +n.toFixed(3)).join(', ')
+               + '  rot ' + PACK.rot.map(n => +n.toFixed(1)).join(', ')
+               + '  size ' + (+PACK.size.toFixed(3)),
+  },
+  axe: {
+    // AXEM stores its angles in radians; the panel speaks degrees so the numbers mean
+    // something to a person turning them.
+    get: i => i < 3 ? AXEM.drop[i] : i === 3 ? AXEM.tilt * 57.2958 : i === 4 ? AXEM.lift * 57.2958
+            : i === 5 ? AXEM.roll * 57.2958 : AXEM.len,
+    set: (i, v) => {
+      if (i < 3) AXEM.drop[i] = v;
+      else if (i === 3) AXEM.tilt = v / 57.2958;
+      else if (i === 4) AXEM.lift = v / 57.2958;
+      else if (i === 5) AXEM.roll = v / 57.2958;
+      else AXEM.len = Math.max(.05, v);
+      fitAxe();
+    },
+    show: () => 'drop ' + AXEM.drop.map(n => +n.toFixed(3)).join(', ')
+               + '  tilt ' + (+(AXEM.tilt * 57.2958).toFixed(1))
+               + '  lift ' + (+(AXEM.lift * 57.2958).toFixed(1))
+               + '  roll ' + (+(AXEM.roll * 57.2958).toFixed(1))
+               + '  len ' + (+AXEM.len.toFixed(3)),
+  },
+};
+function fitBuild() {
+  try { FIT.on = /[?&]fit\b/.test(location.search); } catch (_) { FIT.on = false; }
+  if (!FIT.on) return;
+  const el = document.createElement('div'); el.id = 'fitpad';
+  const tab = t => '<button data-w="' + t + '" class="fw' + (FIT.which === t ? ' on' : '') + '">' + t + '</button>';
+  const draw = () => {
+    const T = FIT_T[FIT.which];
+    el.innerHTML = '<div class="fh">' + tab('pack') + tab('axe') + '<button class="fw" data-say="1">log</button></div>'
+      + FIT.rows.map(([nm, i]) =>
+          '<div class="fr"><b>' + nm + '</b><button data-i="' + i + '" data-s="-1">&minus;</button>'
+          + '<i>' + (+T.get(i).toFixed(3)) + '</i>'
+          + '<button data-i="' + i + '" data-s="1">+</button></div>').join('')
+      + '<div class="fo">' + T.show() + '</div>';
+  };
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    e.stopPropagation();
+    if (b.dataset.w) { FIT.which = b.dataset.w; draw(); return; }
+    if (b.dataset.say) { logMsg(FIT.which + ': ' + FIT_T[FIT.which].show()); return; }
+    const i = +b.dataset.i, sgn = +b.dataset.s, T = FIT_T[FIT.which];
+    const step = i < 3 ? FIT.dp : i < 6 ? FIT.dr : FIT.ds;
+    T.set(i, T.get(i) + sgn * step);
+    draw();
+  });
+  document.body.appendChild(el);
+  draw();
+  // The rig lands well after this runs, so the first draw is of numbers nothing is wired to
+  // yet. Redrawn once it is there rather than left showing stale values.
+  setTimeout(draw, 2500);
 }
 function attachWeapon(r) {
   // The two joints the model was exported with. Matched on the end of the name because an
@@ -22338,6 +22525,7 @@ function looksBuild() {
   looksDraw();
 }
 looksBuild();
+fitBuild();
 // The glyph opens the JOURNAL now, not the subtitle strip -- and it starts shut. `fold` is
 // for the debug panels; this one has its own because it has a state they do not: unread.
 {
@@ -24756,6 +24944,9 @@ function frame(now) {
   // The beam's pulse. Here and not in lampTick: that runs three times a second, which is a
   // strobe rather than a drift.
   if (baseSite && baseSite.beam) baseSite.beam.material.uniforms.uT.value = world.clock;
+  // The bone's world matrix is not meaningful on the frame the model lands, so the fit is
+  // taken again for a few frames rather than once and wrong.
+  if (weap.pack && weap.packN > 0) { weap.packN--; fitPack(); }
   puffStep(dt); weatherLeavings(dt); cullFar(dt); cullView(); cullCells(terrain); cullCells(water); stainTick(dt); beastTick(dt); blobStep(); stepSlash(dt); MUSIC.step(dt);
   purge(world.plants); purge(world.structures); purge(world.creatures); purge(world.effects); purge(world.sparks);
 
