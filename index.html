@@ -582,6 +582,20 @@
      and placed to cover the frame on its own. */
   #wipe{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden}
   #wipe i{position:absolute;display:block;background-repeat:no-repeat;background-size:100% 100%}
+  /* AND A BACKING, BECAUSE THE NEAR BAND DOES NOT COVER THE FRAME. The comment above said it
+     did, by construction, and the arithmetic looked right -- three slots at -16, 24 and 60vh
+     with heights 38, 52 and 43. But those are the heights of the ELEMENTS, and the cloud
+     drawn into each one is opaque over maybe half its box: the puffs run along the bottom
+     edge and the top of the image is transparent sky. So the real cover had a seam across it
+     at about a fifth of the way down, which is the band in his screenshot -- and the world
+     behind it is being torn down and rebuilt at exactly that moment, so what shows through is
+     the messiest frame in the whole game.
+     One element, the cloud's own gradient, faded up as the banks close and down as they part.
+     It is white where they are white, so it is invisible except as the thing that is no longer
+     showing the seam. */
+  #wipefill{position:fixed;inset:-2px;z-index:10;pointer-events:none;opacity:0;
+    background:linear-gradient(180deg,#ffffff 0%,#f7fbff 46%,#e3eefa 78%,#cfe0f0 100%);
+    transition:opacity .34s ease}
 
 
   /* ══ THE BRAND PASS ══════════════════════════════════════════════════════════════════
@@ -1648,7 +1662,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f09';
+const BUILD = 'f10';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -6346,6 +6360,7 @@ function loadModel(url, cb, fail) {
     if (SKINS[url]) applySkin(e.root, SKINS[url]);      // an override, if one is named for this model
     prepModel(e.root, url);
     jointDrift(e.root, e.anims, url);
+    for (const c of (e.anims || [])) trimLoop(c);
     // Measure in the idle pose, not the bind pose. Mixamo exports keep the bind pose hips
     // at the origin and the clips a hip-height above it, so a model normalised to its bind
     // pose stands a hip-height in the air the moment it starts to idle.
@@ -6662,6 +6677,38 @@ function clipSpan(root, clip) {
 
 // A SkinnedMesh cannot be plain-cloned: the copy keeps pointing at the original skeleton
 // and every instance would move as one. SkeletonUtils rebinds it; geometry stays shared.
+// A CYCLE THAT ENDS ON THE POSE IT BEGAN WITH PLAYS THAT POSE TWICE. He watched it on the
+// run and named it exactly: a hitch at the end of every stride. It is how these files come out
+// of the authoring package -- the last keyframe is a copy of the first so the loop reads as
+// closed in the timeline -- and it is measurably true here rather than assumed. Reading the
+// GLB's own animation accessors, alien_orange's run_fwd has a worst-case first-versus-last
+// delta across every channel of 2.3e-5, and walk_fwd 4.0e-5. That is the same numbers, not
+// nearly the same.
+//
+// three wraps LoopRepeat at `duration`, so playing 0..t[n-1] and then jumping to t[0] shows
+// the identical pose for two frame intervals running. Ending at t[n-2] instead makes the wrap
+// an ordinary one-frame step.
+//
+// The times are shifted to zero at the same time, because these clips also start at 0.042
+// rather than at 0 -- the mixer clamps below the first key, so that was a second held frame
+// at the FRONT of every cycle. Only clips that actually duplicate are touched, so a swing or
+// a one-shot gesture is left exactly as it was.
+function trimLoop(clip) {
+  if (!clip || !clip.tracks || !clip.tracks.length) return clip;
+  let end = 0, cut = 0, t0 = Infinity;
+  for (const tr of clip.tracks) {
+    const t = tr.times, v = tr.values, n = t.length;
+    if (n < 3) return clip;                       // too few keys to have a spare one
+    const w = v.length / n;
+    for (let i = 0; i < w; i++) if (Math.abs(v[i] - v[v.length - w + i]) > 2e-3) return clip;
+    if (t[n - 1] > end) { end = t[n - 1]; cut = t[n - 2]; }
+    if (t[0] < t0) t0 = t[0];
+  }
+  if (!(cut > 0) || cut >= end) return clip;
+  if (t0 > 1e-4 && isFinite(t0)) for (const tr of clip.tracks) for (let i = 0; i < tr.times.length; i++) tr.times[i] -= t0;
+  clip.duration = cut - (t0 > 1e-4 && isFinite(t0) ? t0 : 0);
+  return clip;
+}
 function cloneModel(root) {
   const skinned = THREE.SkeletonUtils && root.getObjectByProperty('isSkinnedMesh', true);
   return skinned ? THREE.SkeletonUtils.clone(root) : root.clone(true);
@@ -15189,6 +15236,10 @@ const CHASE = {
   // HOLD_UNTIL, 5.22s after its timeline starts, and this canvas is a child of it -- which is
   // why the title arrived over two people still running. Across by 3.6s, hand off at 5.3s.
   L: { fov: 26, dist: 13, feet: -1.05, quarry: .40, chaser: .60, span: 2.9, enter: .9, T: 2.4, tail: .3, hold: 5.3 },
+  // The inverted hull's thickness, as a fraction of the model's own unscaled height, and its
+  // colour. Not black: the splash's ground is a deep indigo and true black on it reads as a
+  // hole rather than as ink.
+  ink: .009, inkCol: '#160f2e',
 };
 CHASE.dress = function (holder, url, height, clipName, speed) {
   loadModel(url, e => {
@@ -15210,13 +15261,42 @@ CHASE.dress = function (holder, url, height, clipName, speed) {
       if (!o.isMesh) return;
       o.castShadow = o.receiveShadow = false; o.frustumCulled = false;
       const flat = m => {
-        const c = new THREE.MeshBasicMaterial({ map: m && m.map || null, toneMapped: false });
+        const c = new THREE.MeshBasicMaterial({ map: m && m.map || null });
         if (!c.map && m && m.color) c.color.copy(m.color);
         c.skinning = !!o.isSkinnedMesh;              // r128 still wants telling
         c.side = m && m.side !== undefined ? m.side : THREE.FrontSide;
         return c;
       };
       o.material = Array.isArray(o.material) ? o.material.map(flat) : flat(o.material);
+    });
+    // ---- THE LINE ----
+    // The island's outline is a depth Laplacian folded into the post chain, and this splash
+    // has no post chain -- it is a bare renderer onto its own canvas. So the outline is the
+    // other way of getting one, and the older way: an INVERTED HULL. A second copy of every
+    // mesh, backfaces only, with each vertex pushed out along its own normal, drawn behind the
+    // first. Where the silhouette is, the pushed-out backface peeks past the front faces and
+    // reads as ink. One extra draw per mesh, on a screen with two characters on it.
+    //
+    // The push goes in BEFORE <skinning_vertex>, not after. `transformed` at that point is
+    // still the bind-pose vertex, so the offset gets skinned along with it; added after, the
+    // outline would be a rigid shell hanging off a moving body.
+    const ow = h * CHASE.ink;
+    inst.traverse(o => {
+      if (!o.isMesh || o.userData.ink) return;
+      const ink = new THREE.MeshBasicMaterial({ color: new THREE.Color(CHASE.inkCol), side: THREE.BackSide, toneMapped: false });
+      ink.skinning = !!o.isSkinnedMesh;
+      ink.onBeforeCompile = sh => {
+        sh.uniforms.uOut = { value: ow };
+        sh.vertexShader = 'uniform float uOut;\n' + sh.vertexShader.replace(
+          '#include <skinning_vertex>',
+          'transformed += normalize(normal) * uOut;\n#include <skinning_vertex>');
+      };
+      const shell = o.isSkinnedMesh ? new THREE.SkinnedMesh(o.geometry, ink) : new THREE.Mesh(o.geometry, ink);
+      if (o.isSkinnedMesh) { shell.bind(o.skeleton, o.bindMatrix); shell.bindMode = o.bindMode; }
+      shell.position.copy(o.position); shell.quaternion.copy(o.quaternion); shell.scale.copy(o.scale);
+      shell.frustumCulled = false; shell.renderOrder = -1;
+      shell.userData.ink = 1;
+      o.parent.add(shell);
     });
     holder.add(inst);
     const clip = e.anims.find(a => a.name === clipName) || e.anims.find(a => /walk|run/i.test(a.name));
@@ -15234,6 +15314,14 @@ CHASE.start = function (done) {
     r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));   // full screen now, so trim it
     r.setClearColor(0x000000, 0);
     r.outputEncoding = THREE.sRGBEncoding;      // straight to the glass; no composite to undo it
+    // AND THE GAME'S TONE CURVE, which is most of why they did not look like the game. Every
+    // frame of the island goes through ACES at exposure 1.05; this renderer had no tone
+    // mapping at all and the materials carried toneMapped:false on top of it, so what was on
+    // screen was the raw texture at full strength -- brighter, flatter and paler than the same
+    // model standing on the island. Matching the curve is the whole of "render them in the
+    // style", before a single line is drawn.
+    r.toneMapping = THREE.ACESFilmicToneMapping;
+    r.toneMappingExposure = 1.05;
     const sc = this.scene = new THREE.Scene();
     this.cam = new THREE.PerspectiveCamera(L.fov, 2, .1, 40);
     this.cam.position.set(0, 0, L.dist); this.cam.lookAt(0, 0, 0);
@@ -15242,7 +15330,18 @@ CHASE.start = function (done) {
     this.q = new THREE.Group(); this.c = new THREE.Group(); sc.add(this.q, this.c);
     // the only ground there is: a soft pool of light travelling under each of them
     this.qp = glow('#9fc4ff', 1, .34); this.cp = glow('#9fc4ff', 1, .38);
-    for (const p of [this.qp, this.cp]) { p.material.fog = false; p.position.y = L.feet + .02; sc.add(p); }
+    // BEHIND THEM AND UNDER THEM, which is the difference between a pool on the floor and a
+    // spotlight in their faces. The camera here is level with them -- it sits at y 0 looking
+    // straight at the origin -- so there is no floor in frame to lay a real disc on, and the
+    // pool has to be a billboard. What it must not do is sit in the same plane they do: it is
+    // additive, so every pixel of it that overlaps a body is added ON TOP of that body, which
+    // is the white wash he saw. Pushed back in z and dropped below the feet, the bodies occlude
+    // it -- depth testing does the rest -- and what is left is a glow at the floor line.
+    for (const p of [this.qp, this.cp]) {
+      p.material.fog = false; p.material.depthTest = true;
+      p.position.y = L.feet - .07; p.position.z = -.45;
+      sc.add(p);
+    }
     this.dir = Math.random() < .5 ? 1 : -1;
     this.q.rotation.y = this.c.rotation.y = this.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
     this.q.position.y = this.c.position.y = L.feet;
@@ -16871,7 +16970,14 @@ function wipeStart(fn) {
     }
     const put = (el, x, y, sc) => 'translate3d(' + x + 'vw,' + y + 'vh,0) rotate(' + el._t[3]
       + 'deg) scale(' + sc + ') scaleX(' + el._t[5] + ')';
+    const fill = document.createElement('div'); fill.id = 'wipefill';
+    document.body.appendChild(fill);
     document.body.appendChild(g);
+    // Up late in the close and down early in the part, so the lumpy edges are still what you
+    // read on the way in and on the way out -- which is the whole point of the shape -- and
+    // the only moment it is solid is the moment the two worlds are swapped.
+    setTimeout(() => { fill.style.opacity = '1'; }, (WIPE.inT * .62) * 1000);
+    setTimeout(() => { fill.style.opacity = '0'; }, (WIPE.inT + WIPE.hold + .10) * 1000);
     requestAnimationFrame(() => requestAnimationFrame(() => {
       for (const el of els) {
         // Eased at both ends rather than driven in and yanked out: they arrive off their own
@@ -16890,7 +16996,7 @@ function wipeStart(fn) {
     // Not removed until the SLOWEST of them has finished leaving. The far band takes a third
     // longer than the rest, and cutting on the average is what takes them off mid-frame.
     let slow = 0; for (const el of els) slow = Math.max(slow, WIPE.outT * el._sp);
-    setTimeout(() => { g.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + slow + .45) * 1000);
+    setTimeout(() => { g.remove(); fill.remove(); WIPE.on = 0; }, (WIPE.inT + WIPE.hold + slow + .45) * 1000);
   } catch (e) { console.warn('wipe skipped:', e); WIPE.on = 0; fire(); }
   setTimeout(fire, 2000);
 }
