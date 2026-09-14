@@ -1722,7 +1722,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f22';
+const BUILD = 'f23';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -17674,7 +17674,17 @@ const MOVE = {
   // hillMin was .22 -- a fifth of top speed on ANY face, which is what made a wall walkable.
   // The curve above already reaches zero near a gradient of 1.05 on its own; it only ever
   // needed to stop being clamped up off it.
-  hill: .58, hill2: .34, hillMin: 0, dip: .13, dipMax: 1.12,
+  // hillMin IS A FLOOR AGAIN, AND IT IS HIS CALL. At 0 the multiplier is allowed to reach
+  // zero, and a target speed of zero on a model whose whole job is to reach its target speed
+  // NOW is a wall however gently you dress it up -- he arrives at a face and stops dead. The
+  // note below argues that is worth it, because if nothing is out of reach then nothing is
+  // worth reaching. It is a good argument and it lost: what he has actually been living with
+  // is a stall he cannot read, and the only way past it is a dodge, which bypasses steering
+  // entirely and fires him up the face at 23 a second. A wall with an exploit in it is not a
+  // wall, it is a bug, and he has been calling it one for weeks.
+  // .24 is a crawl -- a quarter of top speed on the steepest thing he can stand on -- which is
+  // what he asked for: walk up it, slowly, and feel it.
+  hill: .58, hill2: .34, hillMin: .24, dip: .13, dipMax: 1.12,
   // AND THERE IS A TOP TO IT. hillMin is a FLOOR -- a fifth of top speed, always -- so however
   // steep a face was he still made headway up it, and a mesa wall was a slow staircase rather
   // than a wall. Which quietly costs the map everything: nothing is out of reach, so nothing
@@ -17711,7 +17721,11 @@ const MOVE = {
   // sprint -- three seconds of climbing. That is the "I can still get some momentum and get up
   // them". At 26 the hill has his run in about two thirds of a second: slower and slower, then
   // stopped, and still not the single frame that made it a pane of glass.
-  hillBrake: 26,
+  // 26 took a full run off him in two thirds of a second, which was tuned against a wall at
+  // the end of it. With a floor under the speed instead, that is too abrupt -- it reads as
+  // hitting something rather than as walking into a hill. 15 bleeds a sprint over about a
+  // second, so the run-up carries and then gives out.
+  hillBrake: 15,
   // HOW FAR AHEAD THE SLOPE IS READ, and how fast the reading is allowed to change. These two
   // are the whole of what made it janky. The grade was one sample 1.1 units out -- a step, at
   // walking pace -- so it went from nothing to a wall between two frames and the target speed
@@ -22839,7 +22853,8 @@ function updatePlayer(dt) {
     // Along his BODY, gated by how far round it has got -- see ROLL.lead. Same reason.
     let e = player.lungeH - player.faceH; e = Math.atan2(Math.sin(e), Math.cos(e));
     const al = ROLL.lead + (1 - ROLL.lead) * Math.max(0, Math.cos(e));
-    const sp = player.lungeSp * (MELEE.tail + (1 - MELEE.tail) * k * k) * al;
+    const hk = player.hillK === undefined ? 1 : player.hillK;
+    const sp = player.lungeSp * (MELEE.tail + (1 - MELEE.tail) * k * k) * al * hk;
     player.vx = Math.sin(player.faceH) * sp; player.vz = Math.cos(player.faceH) * sp;
     player.heading = player.lungeH; player.wmag = 0;
   }
@@ -22855,7 +22870,13 @@ function updatePlayer(dt) {
     // crossed, which is the teleport he watched.
     let e = player.rollH - player.faceH; e = Math.atan2(Math.sin(e), Math.cos(e));
     const al = ROLL.lead + (1 - ROLL.lead) * Math.max(0, Math.cos(e));
-    const sp = ROLL.speed * (1 - k * k) * al; // out of the crouch hard, and spent before he stands
+    // AND THE HILL GETS ITS SHARE OF THE DODGE. This block sets the velocity outright -- that
+    // is the point of it, the clip does not travel -- so it was the one thing on the ground
+    // that the slope could not touch, and 23 a second up a face he cannot walk up is how a
+    // stall turned into a launch. One frame stale, since hillK is computed below this; on a
+    // slope that changes over metres, one frame is nothing.
+    const hk = player.hillK === undefined ? 1 : player.hillK;
+    const sp = ROLL.speed * (1 - k * k) * al * hk; // out of the crouch hard, and spent before he stands
     player.vx = Math.sin(player.faceH) * sp; player.vz = Math.cos(player.faceH) * sp;
     player.heading = player.rollH; player.wmag = 0; player.moving = 1;
   }
@@ -22891,6 +22912,7 @@ function updatePlayer(dt) {
       const up = Math.max(0, player.grade);
       hillK = clamp(1 - up * MOVE.hill - up * up * MOVE.hill2 + Math.max(0, -player.grade) * MOVE.dip,
         MOVE.hillMin, MOVE.dipMax);
+      player.hillK = hillK;                 // kept, so the dodge can read it -- see below
     }
     // AND THE GROUND TAKES OVER. Measured off the terrain rather than off the way he is
     // walking, because a face is steep whether or not he is pushing into it -- stop halfway up
