@@ -1709,7 +1709,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f13';
+const BUILD = 'f14';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -15328,18 +15328,24 @@ const CHASE = {
   // The timing has to fit INSIDE the splash's own life: the block dissolves itself at
   // HOLD_UNTIL, 5.22s after its timeline starts, and this canvas is a child of it -- which is
   // why the title arrived over two people still running. Across by 3.6s, hand off at 5.3s.
-  L: { fov: 26, dist: 13, feet: -1.05, quarry: .40, chaser: .60, span: 2.9, enter: .9, T: 2.4, tail: .3, hold: 5.3 },
-  // The inverted hull's thickness, as a fraction of the model's own unscaled height.
-  // ARITHMETIC, NOT TASTE, and .009 was a guess that came out invisible. The lens is 26
-  // degrees at a standoff of 13, so the frame is 2 * 13 * tan(13) = 6.0 lens units tall. The
-  // chaser is .60 of those -- a tenth of the frame, about 90px on a 900px phone. An outline at
-  // .009 of his height is 0.8px. It was drawn correctly and could not be seen, which is the
-  // same mistake as the beacon sprite two builds ago: picking a number for a thing whose size
-  // is set by a projection, without doing the projection.
-  // .030 is about 2.7px at that size, which is a drawn line.
-  // Not black, either: the splash's ground is a deep indigo and true black on it reads as a
-  // hole rather than as ink.
-  ink: .030, inkCol: '#171030',
+  // A THIRD BIGGER. They were sized when a light cone was washing them and the point was to
+  // keep them out of the way of it; with that gone they can hold the frame. .78 of 6.0 lens
+  // units is about an eighth of the screen, which is a character you can read rather than a
+  // detail crossing behind a logo.
+  L: { fov: 26, dist: 13, feet: -1.05, quarry: .52, chaser: .78, span: 2.9, enter: .9, T: 2.4, tail: .3, hold: 5.3 },
+  // The inverted hull's thickness, as a fraction of the model's own unscaled height. The lens
+  // is 26 degrees at a standoff of 13, so the frame is 2 * 13 * tan(13) = 6.0 lens units tall
+  // and the chaser is .78 of those -- about an eighth of the frame. .009 was 0.8px and could
+  // not be seen; .030 was a sticker border. .014 is a drawn line.
+  ink: .014,
+  // AND IT IS WRITTEN IN sRGB AND CONVERTED, which is the actual bug behind "the lines look
+  // light". This renderer has outputEncoding = sRGBEncoding, and r128 has no colour
+  // management -- Color.set stores the hex verbatim, the shader treats it as LINEAR, and the
+  // output pass then encodes it. Dark values get hauled up hard by that curve: #171030 as a
+  // linear value comes out of the encode at roughly #54479a. I asked for ink and the screen
+  // drew pale lavender, which is exactly what is round both of them in his shot.
+  // convertSRGBToLinear turns the colour I mean into the number the pipeline needs.
+  inkCol: new THREE.Color('#150e2c').convertSRGBToLinear(),
 };
 CHASE.dress = function (holder, url, height, clipName, speed) {
   loadModel(url, e => {
@@ -15383,7 +15389,7 @@ CHASE.dress = function (holder, url, height, clipName, speed) {
     const ow = h * CHASE.ink;
     inst.traverse(o => {
       if (!o.isMesh || o.userData.ink) return;
-      const ink = new THREE.MeshBasicMaterial({ color: new THREE.Color(CHASE.inkCol), side: THREE.BackSide, toneMapped: false });
+      const ink = new THREE.MeshBasicMaterial({ color: CHASE.inkCol.clone(), side: THREE.BackSide, toneMapped: false });
       ink.skinning = !!o.isSkinnedMesh;
       ink.onBeforeCompile = sh => {
         sh.uniforms.uOut = { value: ow };
