@@ -283,8 +283,42 @@
   #perf{font-size:12px;line-height:1.5;opacity:.75;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:6px}
   #stats{font-size:12px;line-height:1.55;opacity:.92;font-family:ui-monospace,Menlo,Consolas,monospace}
   #log{position:fixed;left:16px;bottom:calc(14px + var(--uib,0px));z-index:2;font-size:13px;line-height:1.5;pointer-events:none;max-width:78vw;text-shadow:0 1px 4px rgba(0,0,0,.85)}
-  #log div{animation:fade 11s forwards}
-  @keyframes fade{0%{opacity:0;transform:translateY(4px)}6%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
+  #log div{animation:fade 6.4s forwards}
+  /* ══ THE JOURNAL ══════════════════════════════════════════════════════════════════════
+     What #log used to be -- five lines stacked at 14px across three quarters of a phone --
+     was a block of text sitting on the game, and the honest evidence is that he closed it
+     every single launch. It is two things wedged together: a SUBTITLE (the island just said
+     something, read it now) and a RECORD (what has happened here). They want opposite
+     treatments, so they are two things now.
+     The subtitle is #log, one line, gone in six seconds, and it costs a strip.
+     The record is this: nothing on screen until asked for, everything kept, and it does not
+     fade out from under you while you are reading it. */
+  #journal{width:min(304px,74vw);max-height:min(52vh,420px);overflow-y:auto;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;touch-action:pan-y;pointer-events:auto;
+    color:var(--ink);background:var(--glass2);border:1.5px solid var(--rim);border-radius:14px;
+    box-shadow:0 8px 26px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.04);
+    -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);
+    padding:11px 13px 13px;scrollbar-width:thin}
+  #journal::-webkit-scrollbar{width:4px}
+  #journal::-webkit-scrollbar-thumb{background:rgba(157,247,255,.26);border-radius:3px}
+  #journal h3{margin:0 0 8px;font-family:var(--disp);font-weight:700;font-size:11px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--cy);opacity:.78}
+  #journal .day{font-family:var(--disp);font-weight:600;font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;opacity:.42;margin:11px 0 5px;display:flex;align-items:center;gap:7px}
+  #journal .day::after{content:'';flex:1;height:1px;background:rgba(157,247,255,.20)}
+  #journal .day:first-of-type{margin-top:2px}
+  #journal p{margin:0 0 6px;padding-left:9px;font-size:13px;line-height:1.46;
+    border-left:2px solid rgba(157,247,255,.42);color:var(--ink2)}
+  #journal p.fresh{border-left-color:var(--cy);color:var(--ink)}
+  #journal .none{font-size:12.5px;line-height:1.5;opacity:.44;padding:4px 0 2px}
+  /* The unread mark. A button with nothing to say should not be shouting, and a button that
+     has been saving things up for you should not look identical to it. */
+  #logT{position:relative}
+  #logT svg{display:block;width:17px;height:17px}
+  #logT.new::after{content:'';position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;
+    background:var(--cy);box-shadow:0 0 8px rgba(157,247,255,.9);animation:npulse 2.2s ease-in-out infinite}
+  @keyframes npulse{0%,100%{opacity:.55;transform:scale(.82)}50%{opacity:1;transform:scale(1)}}
+  @keyframes fade{0%{opacity:0;transform:translateY(4px)}10%{opacity:1;transform:none}72%{opacity:1}100%{opacity:0}}
   #hint{position:fixed;right:16px;bottom:calc(14px + var(--uib,0px));font-size:12px;opacity:.5;pointer-events:none;text-align:right;line-height:1.5}
   #mapv{position:fixed;inset:0;z-index:6;display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:radial-gradient(ellipse at 50% 46%,rgba(6,10,18,.34),rgba(4,8,14,.72) 78%);
@@ -1554,7 +1588,14 @@ window._MAJIA_RULE = 'rgba(127,216,255,0.62)';
 </svg></div>
 <div id="ui">
   <canvas id="mini" title="open the map"></canvas>
-  <button id="logT" class="tog icon" title="the island's notes">notes</button>
+  <!-- A GLYPH, NOT THE WORD "notes" IN A DEBUG PILL. It sat between the map and the "..."
+       controls chip and read as one of them, which is how a thing the island SAYS ended up
+       looking like a developer switch. Three ruled lines on a page with a turned corner. -->
+  <button id="logT" class="tog icon" title="the island's notes" aria-label="notes"><svg viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 3.6h9.2L19 8.4v12H5z"/><path d="M14 3.6v5h5"/>
+    <path d="M8.2 12.4h7.1M8.2 15.4h7.1M8.2 18.2h4.3"/></svg></button>
+  <div id="journal" hidden></div>
   <button id="ctlT" class="tog icon" title="controls">&#183;&#183;&#183;</button>
   <!-- EJECT, WHERE HE CAN SEE IT. It has existed since the day it was asked for, and so has
        the line out of the belly port -- both of them behind the folded controls panel, which
@@ -1662,7 +1703,7 @@ const W = 400, SEA = 0, DAY = 110, GROW_T = 85;
 // at the top of the file. Read below its own declaration it is a TDZ, which kills the rest of
 // the file and shows as a blank page -- the thirteenth time that has happened here. It being
 // early also keeps it inside the range the stale-build check reads.
-const BUILD = 'f10';
+const BUILD = 'f11';
 // Up here with BUILD and for the same reason: the sound loader stamps this on every audio URL
 // and it runs at the top of the file. Below its own declaration it is a TDZ, which kills the
 // rest of the script -- the fourteenth time -- and a script that dies here never starts the
@@ -5121,7 +5162,53 @@ function clearGrass(x, z, r) {
 // with most of the frame in the dark half of the value range. .35 puts it at thirty-seven.
 const world = { t: DAY * .35, day: 1, greatTree: null, camp: null, isle: null, cave: null, psys: [], plants: [], creatures: [], structures: [], effects: [], sparks: [], pits: [], cairns: 0, beacons: 0, lights: 0, clock: 0, night: 0, sunE: 1, lastEra: '', asSpecies: null };   // asSpecies: whose skin he is wearing, once the DNA lab can put him in one
 const logEl = document.getElementById('log');
-function logMsg(s) { const d = document.createElement('div'); d.textContent = s; logEl.appendChild(d); while (logEl.children.length > 5) logEl.removeChild(logEl.firstChild); setTimeout(() => d.remove(), 11500); }
+// THE ISLAND'S VOICE, SPLIT IN TWO. What this used to do was append a line to a stack of up
+// to five, at 14px across three quarters of a phone, which stayed for eleven and a half
+// seconds -- and the honest evidence that it was wrong is that he shut it on every single
+// launch. The problem is that it was doing two jobs with one treatment: a SUBTITLE (something
+// just happened, read it now) and a RECORD (what has happened here). Those want opposite
+// things. A subtitle should be one line and gone; a record should be complete and should not
+// fade out from under you while you are reading it.
+//
+// So: the line on screen is one line and it lasts six seconds. Everything said is kept in
+// NOTE.log whether or not anything is open, and the journal behind the glyph is the only
+// place it is ever a block of text -- asked for, never volunteered.
+const NOTE = { log: [], cap: 140, open: false, unread: 0 };
+function logMsg(s) {
+  // `world` is a module-level binding a long way below this, and logMsg can be called from
+  // anywhere -- including from code that runs before it is initialised, where even `world &&`
+  // throws rather than being falsy. That specific mistake has cost this file more builds than
+  // any other, so the read is guarded rather than argued about.
+  let day = 1; try { day = (world && world.day) || 1; } catch (_) {}
+  NOTE.log.push({ s, day });
+  if (NOTE.log.length > NOTE.cap) NOTE.log.shift();
+  // the subtitle: it REPLACES, it does not stack
+  const d = document.createElement('div'); d.textContent = s;
+  while (logEl.firstChild) logEl.removeChild(logEl.firstChild);
+  logEl.appendChild(d);
+  setTimeout(() => d.remove(), 6600);
+  if (NOTE.open) journalDraw();
+  else { NOTE.unread++; const b = document.getElementById('logT'); if (b) b.classList.add('new'); }
+}
+// Newest first, because the thing you want is almost always the thing that just happened, and
+// grouped by day, because "day 3" is the only clock this world keeps that anyone reads.
+function journalDraw() {
+  const el = document.getElementById('journal'); if (!el) return;
+  if (!NOTE.log.length) {
+    el.innerHTML = '<h3>the island</h3><div class="none">Nothing yet. It will have things to say.</div>';
+    return;
+  }
+  const out = ['<h3>the island</h3>'];
+  let day = null;
+  for (let i = NOTE.log.length - 1, n = 0; i >= 0 && n < 60; i--, n++) {
+    const e = NOTE.log[i];
+    if (e.day !== day) { day = e.day; out.push('<div class="day">day ' + day + '</div>'); }
+    const esc = e.s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    out.push('<p' + (n < 1 ? ' class="fresh"' : '') + '>' + esc + '</p>');
+  }
+  el.innerHTML = out.join('');
+  el.scrollTop = 0;
+}
 
 // ---------- weather ----------
 // Fronts come in off the sea every few minutes: cloud builds, rain follows, about half
@@ -22210,7 +22297,17 @@ function looksBuild() {
   looksDraw();
 }
 looksBuild();
-fold('logT', 'log', true);
+// The glyph opens the JOURNAL now, not the subtitle strip -- and it starts shut. `fold` is
+// for the debug panels; this one has its own because it has a state they do not: unread.
+{
+  const b = document.getElementById('logT'), el = document.getElementById('journal');
+  const apply = () => {
+    el.hidden = !NOTE.open; b.classList.toggle('on', NOTE.open);
+    if (NOTE.open) { NOTE.unread = 0; b.classList.remove('new'); journalDraw(); }
+  };
+  b.addEventListener('click', e => { e.stopPropagation(); NOTE.open = !NOTE.open; apply(); });
+  apply();
+}
 const hintEl = document.getElementById('hint'), hint0 = hintEl.innerHTML;
 addEventListener('keydown', e => { if (e.key.toLowerCase() === 'q') toggleArm(); if (e.key.toLowerCase() === 'm') toggleMap(); if (e.key.toLowerCase() === 'n') doArm(); if (e.key.toLowerCase() === 'b' && world.ship) { if (player.aboard) world.ship.eject(); else world.ship.board(); } });
 // EJECT. On the ground it is the ordinary way out; in the air it is the belly hatch and a
